@@ -1,0 +1,32 @@
+PNG to WebM - Third-Party Components
+
+FFmpeg 9.0.1: https://ffmpeg.org/
+Built without GPL or nonfree components; this configuration is LGPL 2.1 or later.
+libvpx 1.15.2: https://github.com/webmproject/libvpx (BSD-style license and PATENTS).
+Unmodified matching source archives, license texts, checksums and the build
+script are included in notices/sources and notices/build-manifest.json.
+The system zlib and platform libraries are used on macOS. Windows builds use
+MSYS2's zlib and MinGW toolchain; audit their runtime notices before distribution.
+
+Qt / PySide6 / Shiboken6 6.11.2: https://www.qt.io/ (LGPL 3.0 option).
+Only Qt modules pulled in by QtCore, QtGui and QtWidgets are required by the app.
+Qt and Python are dynamically linked in the onedir distribution. The matching
+application source and packaging instructions are included in application-source
+so a modified Qt library can be used by rebuilding. No prohibition on reverse
+engineering for debugging modifications to LGPL components is imposed here.
+Matching upstream sources:
+https://download.qt.io/official_releases/qt/6.11/6.11.2/submodules/
+https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=v6.11.2
+These links are source references, not a written source offer from a distributor.
+
+Python: https://www.python.org/ (PSF license, included).
+Pillow: https://python-pillow.github.io/ (MIT-CMU and bundled library notices).
+PyInstaller bootloader: GPL with the bootloader distribution exception.
+Installed distribution metadata and available license notices are included.
+
+Release status: local development build, not a signed public release.
+Before redistributing, complete a component-by-component license/source review
+of the generated package, including Qt's bundled third-party libraries. Provide
+the corresponding LGPL sources or a compliant offer through your distribution
+channel. Source links alone do not discharge those obligations.
+macOS signing/notarization and Windows signing are separate release steps.

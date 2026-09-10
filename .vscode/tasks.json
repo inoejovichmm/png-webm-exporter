@@ -1,0 +1,59 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build bundled FFmpeg",
+			"type": "shell",
+			"command": ".venv/bin/python tools/build_ffmpeg.py",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Test bundled exporter",
+			"type": "shell",
+			"command": ".venv/bin/python tools/check.py",
+			"windows": {
+				"command": ".venv\\Scripts\\python tools/check.py"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Package desktop app",
+			"type": "shell",
+			"command": ".venv/bin/python tools/package.py",
+			"windows": {
+				"command": ".venv\\Scripts\\python tools/package.py"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Smoke test frozen app",
+			"type": "shell",
+			"command": ".venv/bin/python tools/check.py --frozen",
+			"windows": {
+				"command": ".venv\\Scripts\\python tools/check.py --frozen"
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Open macOS desktop app",
+			"type": "shell",
+			"command": "open \"dist/PNG to WebM.app\"",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Inspect exporter Git setup",
+			"type": "shell",
+			"command": "pwd; git rev-parse --show-toplevel; git status --short; git remote -v; command -v gh; gh auth status; GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10' git ls-remote git@github.com:inoejovichmm/png-webm-exporter.git",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
