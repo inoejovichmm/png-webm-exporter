@@ -39,6 +39,15 @@ jobs:
       - name: Build pinned FFmpeg sources
         shell: msys2 {0}
         run: /usr/bin/python tools/build_ffmpeg.py
+      - name: Upload native build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-build-logs
+          path: |
+            build/native/ffmpeg-*/ffbuild/config.log
+            build/native/libvpx-*/config.log
+          if-no-files-found: ignore
       - name: Install application dependencies
         run: |
           python -m pip install -r requirements-build.txt
