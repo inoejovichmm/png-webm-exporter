@@ -8,7 +8,7 @@ from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QStyle, QTabWidget,
+    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -42,7 +42,6 @@ class ExportWindow(QMainWindow):
         header.addWidget(heading)
         header.addStretch()
         self.readme_button = QPushButton("README")
-        self.readme_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
         self.readme_button.setToolTip("Read the application README")
         self.readme_button.clicked.connect(self.show_readme)
         header.addWidget(self.readme_button)
@@ -52,10 +51,15 @@ class ExportWindow(QMainWindow):
         columns.setContentsMargins(0, 0, 0, 0)
         columns.setSpacing(24)
         source = QVBoxLayout()
+        select_row = QHBoxLayout()
         self.choose = QPushButton("Select PNG frames")
-        self.choose.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.choose.clicked.connect(self.choose_frames)
-        source.addWidget(self.choose)
+        select_row.addWidget(self.choose)
+        self.choose_dir = QPushButton("Select folder")
+        self.choose_dir.setToolTip("Select a folder that contains only the PNG frames to encode.")
+        self.choose_dir.clicked.connect(self.choose_folder)
+        select_row.addWidget(self.choose_dir)
+        source.addLayout(select_row)
         self.preview = QLabel("No frames selected")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(180, 140)
@@ -98,11 +102,9 @@ class ExportWindow(QMainWindow):
         crf_layout = QHBoxLayout(crf_row)
         crf_layout.setContentsMargins(0, 0, 0, 0)
         crf_layout.addWidget(self.crf, 1)
-        self.crf_help = QPushButton()
-        self.crf_help.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        self.crf_help = QPushButton("Explain")
         self.crf_help.setToolTip("Explain CRF and the selected quality mode")
         self.crf_help.setAccessibleName("Explain CRF")
-        self.crf_help.setFixedSize(28, 28)
         self.crf_help.clicked.connect(self.show_crf_help)
         crf_layout.addWidget(self.crf_help)
         self.crf_label = self.add_field(form, "CRF", crf_row, "")
@@ -149,8 +151,7 @@ class ExportWindow(QMainWindow):
         self.destination = QLineEdit()
         self.destination.setPlaceholderText("Output .webm file")
         self.destination.setToolTip("Destination file. Existing files are replaced only after successful verification and your confirmation.")
-        self.browse = QPushButton()
-        self.browse.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.browse = QPushButton("Browse\u2026")
         self.browse.setToolTip("Choose output file")
         self.browse.setAccessibleName("Choose output file")
         self.browse.clicked.connect(self.choose_output)
@@ -184,7 +185,6 @@ class ExportWindow(QMainWindow):
         self.cancel.clicked.connect(self.cancel_export)
         buttons.addWidget(self.cancel)
         self.export = QPushButton("Export WebM")
-        self.export.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
         self.export.setDefault(True)
         self.export.clicked.connect(self.start_export)
         buttons.addWidget(self.export)
@@ -278,6 +278,17 @@ class ExportWindow(QMainWindow):
         names, _ = QFileDialog.getOpenFileNames(self, "Select consecutive PNG frames", "", "PNG frames (*.png *.PNG)")
         if names:
             self.set_frames([Path(name) for name in names])
+
+    def choose_folder(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select a folder of PNG frames")
+        if not directory:
+            return
+        pngs = sorted(path for path in Path(directory).iterdir()
+                      if path.is_file() and path.suffix.lower() == ".png")
+        if not pngs:
+            QMessageBox.warning(self, "No PNG frames found", "The selected folder contains no PNG files.")
+            return
+        self.set_frames(pngs)
 
     def set_frames(self, paths):
         try:

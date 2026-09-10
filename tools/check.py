@@ -30,7 +30,8 @@ def main():
         environment["PATH"] = "/usr/bin:/bin"
     elif os.name == "nt":
         executable = ROOT / "dist" / "PNG to WebM" / "PNG to WebM.exe"
-        environment["PATH"] = str(Path(environment["SystemRoot"]) / "System32")
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        environment["PATH"] = str(Path(system_root) / "System32")
     else:
         raise SystemExit("Frozen checks support macOS and Windows.")
     environment["PNG_WEBM_FFMPEG"] = "deliberately-unavailable"
