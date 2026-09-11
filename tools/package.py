@@ -57,7 +57,8 @@ def main():
         (notices / "python-LICENSE.txt").write_text("\n".join(license_object._Printer__lines), encoding="utf-8")
     shutil.copy2(ROOT / "THIRD_PARTY.txt", notices)
     (notices / "runtime-versions.json").write_text(json.dumps({"python": sys.version, **versions}, indent=2), encoding="utf-8")
-    arguments = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onedir",
+    package_mode = "--onedir" if sys.platform == "darwin" else "--onefile"
+    arguments = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", package_mode,
                  "--name", "PNG to WebM", "--paths", str(ROOT / "src"), "--specpath", "build",
                  "--add-data", f"{notices}{os.pathsep}notices",
                  "--add-data", f"{ROOT / 'src'}{os.pathsep}application-source/src",
@@ -75,15 +76,16 @@ def main():
     if sys.platform == "darwin":
         app = ROOT / "dist" / "PNG to WebM.app"
         subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
-        archive = ROOT / "dist" / "PNG-to-WebM-macos-arm64.zip"
-        subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)], check=True)
+        artifact = ROOT / "dist" / "PNG-to-WebM-macos-arm64.zip"
+        subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(artifact)], check=True)
     else:
-        archive = Path(shutil.make_archive(str(ROOT / "dist" / "PNG-to-WebM-windows-x64"), "zip",
-                                           ROOT / "dist", "PNG to WebM"))
-    with archive.open("rb") as stream:
+        artifact = ROOT / "dist" / "PNG-to-WebM-windows-x64.exe"
+        artifact.unlink(missing_ok=True)
+        (ROOT / "dist" / "PNG to WebM.exe").rename(artifact)
+    with artifact.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    archive.with_suffix(".zip.sha256").write_text(f"{digest}  {archive.name}\n", encoding="ascii")
-    print(f"Package: {archive}\nSHA256: {digest}\nBuilt on {platform.platform()}")
+    (artifact.parent / f"{artifact.name}.sha256").write_text(f"{digest}  {artifact.name}\n", encoding="ascii")
+    print(f"Package: {artifact}\nSHA256: {digest}\nBuilt on {platform.platform()}")
 
 
 if __name__ == "__main__":

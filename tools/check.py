@@ -29,7 +29,7 @@ def main():
         executable = ROOT / "dist" / "PNG to WebM.app" / "Contents" / "MacOS" / "PNG to WebM"
         environment["PATH"] = "/usr/bin:/bin"
     elif os.name == "nt":
-        executable = ROOT / "dist" / "PNG to WebM" / "PNG to WebM.exe"
+        executable = ROOT / "dist" / "PNG-to-WebM-windows-x64.exe"
         system_root = os.environ.get("SystemRoot", r"C:\Windows")
         environment["PATH"] = str(Path(system_root) / "System32")
     else:
