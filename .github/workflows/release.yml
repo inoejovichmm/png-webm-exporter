@@ -28,7 +28,7 @@ jobs:
           architecture: x64
       - name: Restore prebuilt FFmpeg binaries
         id: ffmpeg-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             vendor/bin
@@ -92,7 +92,7 @@ jobs:
           python-version: "3.14"
       - name: Restore prebuilt FFmpeg binaries
         id: ffmpeg-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             vendor/bin
