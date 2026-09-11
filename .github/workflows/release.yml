@@ -1,4 +1,4 @@
-name: Windows desktop build
+name: Desktop build and release
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
       - "tools/**"
       - "requirements-build.txt"
       - "pyproject.toml"
-      - ".github/workflows/windows-build.yml"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: read
@@ -62,6 +62,83 @@ jobs:
         with:
           name: PNG-to-WebM-windows-x64-unsigned
           path: |
-            dist/PNG-to-WebM-windows-x64.zip
-            dist/PNG-to-WebM-windows-x64.zip.sha256
+            dist/PNG-to-WebM-windows-x64.exe
+            dist/PNG-to-WebM-windows-x64.exe.sha256
           if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install native build tools
+        run: brew install pkg-config nasm
+      - name: Build pinned FFmpeg sources
+        run: python tools/build_ffmpeg.py
+      - name: Install application dependencies
+        run: |
+          python -m pip install -r requirements-build.txt
+          python -m pip install -e .
+      - name: Test bundled encoder and GUI
+        run: python tools/check.py
+      - name: Package desktop application
+        run: python tools/package.py
+      - name: Smoke test frozen app
+        run: python tools/check.py --frozen
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PNG-to-WebM-macos-arm64-unsigned
+          path: |
+            dist/PNG-to-WebM-macos-arm64.zip
+            dist/PNG-to-WebM-macos-arm64.zip.sha256
+          if-no-files-found: error
+
+  release:
+    needs: [windows, macos]
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PNG-to-WebM-windows-x64-unsigned
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: PNG-to-WebM-macos-arm64-unsigned
+          path: dist
+      - name: Compute next version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/tags" --paginate --jq '.[].name' \
+            | { grep -E '^v[0-9]+$' || true; } | sed 's/^v//' | sort -n | tail -1)
+          echo "tag=v$(( ${latest:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ steps.version.outputs.tag }}"
+          dist/PNG-to-WebM-windows-x64.exe
+          dist/PNG-to-WebM-windows-x64.exe.sha256
+          dist/PNG-to-WebM-macos-arm64.zip
+          dist/PNG-to-WebM-macos-arm64.zip.sha256
+          --repo "${{ github.repository }}"
+          --target "${{ github.sha }}"
+          --title "${{ steps.version.outputs.tag }}"
+          --generate-notes
+      - name: Move latest tag to this release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH "repos/${{ github.repository }}/git/refs/tags/latest" \
+            -f sha="${{ github.sha }}" -F force=true \
+          || gh api -X POST "repos/${{ github.repository }}/git/refs" \
+            -f ref="refs/tags/latest" -f sha="${{ github.sha }}"
