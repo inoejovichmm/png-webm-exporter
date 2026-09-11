@@ -21,8 +21,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           architecture: x64
@@ -41,7 +41,7 @@ jobs:
         run: /usr/bin/python tools/build_ffmpeg.py
       - name: Upload native build diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-native-build-logs
           path: |
@@ -58,7 +58,7 @@ jobs:
         run: python tools/package.py
       - name: Smoke test frozen executable
         run: python tools/check.py --frozen
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: PNG-to-WebM-windows-x64-unsigned
           path: |
@@ -72,8 +72,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - name: Install native build tools
@@ -90,7 +90,7 @@ jobs:
         run: python tools/package.py
       - name: Smoke test frozen app
         run: python tools/check.py --frozen
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: PNG-to-WebM-macos-arm64-unsigned
           path: |
@@ -105,11 +105,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: PNG-to-WebM-windows-x64-unsigned
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: PNG-to-WebM-macos-arm64-unsigned
           path: dist
