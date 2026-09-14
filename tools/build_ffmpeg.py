@@ -19,6 +19,10 @@ SOURCES = {
         "url": "https://codeload.github.com/webmproject/libvpx/tar.gz/refs/tags/v1.15.2",
         "sha256": "26fcd3db88045dee380e581862a6ef106f49b74b6396ee95c2993a260b4636aa",
     },
+    "libwebp-1.6.0.tar.gz": {
+        "url": "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz",
+        "sha256": "e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564",
+    },
 }
 
 
@@ -68,16 +72,31 @@ def main():
     run(vpx_args, vpx, environment)
     run(["make", "-j", jobs], vpx, environment)
     run(["make", "install"], vpx, environment)
+    webp = work / "libwebp-1.6.0"
+    webp_args = ["sh", "./configure", f"--prefix={prefix}",
+                 "--disable-shared", "--enable-static", "--disable-dependency-tracking",
+                 "--enable-libwebpmux", "--disable-gl", "--disable-sdl",
+                 "--disable-png", "--disable-jpeg", "--disable-tiff",
+                 "--disable-gif", "--disable-wic"]
+    if windows:
+        webp_args.append("--host=x86_64-w64-mingw32")
+    run(webp_args, webp, environment)
+    run(["make", "-j", jobs], webp, environment)
+    run(["make", "install"], webp, environment)
     ffmpeg = work / "ffmpeg-9.0.1"
     ffmpeg_args = ["sh", "./configure", f"--prefix={prefix}", "--disable-everything",
                    "--disable-autodetect", "--disable-network", "--disable-programs",
                    "--enable-ffmpeg", "--enable-ffprobe", "--disable-doc", "--disable-debug",
                    "--disable-shared", "--enable-static",
-                   "--enable-w32threads" if windows else "--enable-pthreads", "--enable-libvpx",
-                   "--enable-zlib", "--enable-encoder=libvpx_vp9", "--enable-decoder=png,vp9",
-                   "--enable-parser=png,vp9", "--enable-demuxer=image2,matroska",
-                   "--enable-muxer=webm", "--enable-bsf=vp9_superframe", "--enable-protocol=file,pipe",
-                   "--enable-filter=scale,format,setparams", "--enable-swscale", "--pkg-config-flags=--static"]
+                   "--enable-w32threads" if windows else "--enable-pthreads",
+                   "--enable-libvpx", "--enable-libwebp",
+                   "--enable-zlib", "--enable-encoder=libvpx_vp9,libwebp",
+                   "--enable-decoder=png,vp9", "--enable-parser=png,vp9",
+                   "--enable-demuxer=image2,matroska",
+                   "--enable-muxer=webm,webp", "--enable-bsf=vp9_superframe",
+                   "--enable-protocol=file,pipe",
+                   "--enable-filter=scale,format,setparams,select", "--enable-swscale",
+                   "--pkg-config-flags=--static"]
     if windows:
         ffmpeg_args += ["--extra-ldflags=-static", "--extra-libs=-lstdc++"]
     run(ffmpeg_args, ffmpeg, environment)
@@ -95,11 +114,14 @@ def main():
     for source, name in ((ffmpeg / "COPYING.LGPLv2.1", "FFmpeg-LGPL-2.1.txt"),
                          (ffmpeg / "LICENSE.md", "FFmpeg-LICENSE.md"),
                          (vpx / "LICENSE", "libvpx-LICENSE.txt"),
-                         (vpx / "PATENTS", "libvpx-PATENTS.txt")):
+                         (vpx / "PATENTS", "libvpx-PATENTS.txt"),
+                         (webp / "COPYING", "libwebp-LICENSE.txt"),
+                         (webp / "PATENTS", "libwebp-PATENTS.txt")):
         shutil.copy2(source, notices / name)
     shutil.copy2(__file__, notices / "build_ffmpeg.py")
     metadata = {"platform": platform.platform(), "sources": SOURCES,
-                "configure": {"libvpx": vpx_args, "ffmpeg": ffmpeg_args}, "binaries": binaries}
+                "configure": {"libvpx": vpx_args, "libwebp": webp_args, "ffmpeg": ffmpeg_args},
+                "binaries": binaries}
     (notices / "build-manifest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"Built binaries and notices in {vendor}")
 
