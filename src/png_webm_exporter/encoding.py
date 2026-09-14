@@ -32,6 +32,8 @@ class Settings:
     tile_columns: int = 2
     threads: int = 8
     gop: int = 0
+    export_frames: bool = False
+    frame_quality: int = 90
 
     def validate(self) -> None:
         try:
@@ -46,6 +48,7 @@ class Settings:
             ("Adaptive quantization", self.aq_mode, 0, 4),
             ("Tile exponent", self.tile_columns, 0, 6), ("Threads", self.threads, 0, 256),
             ("Keyframe distance", self.gop, 0, 1_000_000),
+            ("Frame WebP quality", self.frame_quality, 0, 100),
         ):
             if not isinstance(value, int) or not minimum <= value <= maximum:
                 raise ValueError(f"{name} must be between {minimum} and {maximum}.")
@@ -78,6 +81,22 @@ def build_args(sequence: Sequence, settings: Settings, output: Path, crf: int) -
     if settings.gop:
         args += ["-g", str(settings.gop)]
     return args + ["-an", "-f", "webm", str(output)]
+
+
+def build_frame_args(source: Path, output: Path, quality: int, frame_index: int) -> list[str]:
+    if not 0 <= quality <= 100:
+        raise ValueError("Frame WebP quality must be between 0 and 100.")
+    if frame_index < 0:
+        raise ValueError("Frame index must not be negative.")
+    args = ["-hide_banner", "-nostdin", "-nostats", "-y", "-xerror",
+            "-i", str(source), "-map", "0:v:0",
+            "-vf", f"select=eq(n\\,{frame_index})", "-frames:v", "1",
+            "-fps_mode", "passthrough", "-c:v", "libwebp"]
+    if quality >= 100:
+        args += ["-lossless", "1"]
+    else:
+        args += ["-lossless", "0", "-q:v", str(quality)]
+    return args + ["-an", "-f", "webp", str(output)]
 
 
 class Canceled(Exception):
@@ -263,6 +282,8 @@ class ExportWorker(QThread):
         encoders = self.execute(ffmpeg, ["-hide_banner", "-encoders"])
         if "libvpx-vp9" not in encoders:
             raise ValueError("This FFmpeg build does not include libvpx-vp9.")
+        if self.settings.export_frames and "libwebp" not in encoders:
+            raise ValueError("This FFmpeg build does not include libwebp; frame export is unavailable.")
         search = SizeSearch(self.settings.target_bytes, self.settings.crf) if self.settings.target_bytes else None
         best_path = None
         chosen_crf = self.settings.crf
@@ -329,4 +350,24 @@ class ExportWorker(QThread):
             raise ValueError("Destination changed again. Choose another filename and retry.")
         os.replace(best_path, self.destination)
         self.owned.discard(best_path)
+        if self.settings.export_frames:
+            result["frame_files"] = self.export_boundary_frames(ffmpeg, sequence.count)
         self.succeeded.emit(result)
+
+    def export_boundary_frames(self, ffmpeg: Path, frame_count: int) -> list[str]:
+        quality = self.settings.frame_quality
+        mode = "lossless" if quality >= 100 else f"q {quality}"
+        exports = {"first": 0, "last": max(frame_count - 1, 0)}
+        written: list[str] = []
+        for position, index in exports.items():
+            if self.stop.is_set():
+                raise Canceled
+            self.update.emit({"phase": f"Exporting {position} frame as WebP ({mode})", "percent": -1})
+            target = self.destination.with_name(f"{self.destination.stem}_{position}.webp")
+            args = build_frame_args(self.destination, target, quality, index)
+            self.log.append(json.dumps([str(ffmpeg), *args]))
+            self.execute(ffmpeg, args)
+            if not target.is_file() or target.stat().st_size <= 0:
+                raise ValueError(f"FFmpeg did not produce the {position} frame WebP.")
+            written.append(str(target))
+        return written
