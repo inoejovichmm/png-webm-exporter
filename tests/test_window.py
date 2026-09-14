@@ -104,8 +104,8 @@ def test_gui_export(window, qtbot, tmp_path):
     window.color_confirm.setChecked(True)
     window.mode.setCurrentIndex(1)
     window.target.setText("0.02")
-    destination = tmp_path / "output.webm"
-    window.destination.setText(str(destination))
+    window.destination.setText(str(tmp_path))
+    destination = tmp_path / "frame.webm"
     window.start_export()
     assert not window.export.isEnabled()
     qtbot.waitUntil(lambda: window.export.isEnabled(), timeout=30_000)

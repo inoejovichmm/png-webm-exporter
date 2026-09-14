@@ -113,6 +113,10 @@ class ExportWindow(QMainWindow):
         self.range = QComboBox()
         self.range.addItems(["Full (0-255)", "Limited (16-235)"])
         self.add_field(form, "Output range", self.range, "Controls RGB-to-YUV conversion and range metadata together. Full is the delivery preset; choose Limited only when required by the playback pipeline. Both use a Rec.709 matrix and tags.")
+        self.export_frames = QCheckBox()
+        self.add_field(form, "Export first and last frames (WebP)", self.export_frames, "After the WebM is verified, also save the first and last frames next to it as <name>_first.webp and <name>_last.webp. Frames are extracted from the finished video and encoded with libwebp.")
+        self.frame_quality = self.spin(0, 100, 90)
+        self.frame_quality_label = self.add_field(form, "Frame WebP quality", self.frame_quality, "libwebp quality passed as -q:v, from 0 (smallest) to 100. Setting 100 switches libwebp into lossless mode instead of using the quality scale.")
         self.tabs.addTab(delivery, "Delivery")
         advanced = QWidget()
         advanced_form = QFormLayout(advanced)
@@ -149,15 +153,19 @@ class ExportWindow(QMainWindow):
         layout.addWidget(self.inputs, 1)
         output_row = QHBoxLayout()
         self.destination = QLineEdit()
-        self.destination.setPlaceholderText("Output .webm file")
-        self.destination.setToolTip("Destination file. Existing files are replaced only after successful verification and your confirmation.")
+        self.destination.setPlaceholderText("Output folder")
+        self.destination.setToolTip("Destination folder. The output file name is derived from the frame name pattern. Existing files are replaced only after successful verification and your confirmation.")
         self.browse = QPushButton("Browse\u2026")
-        self.browse.setToolTip("Choose output file")
-        self.browse.setAccessibleName("Choose output file")
+        self.browse.setToolTip("Choose output folder")
+        self.browse.setAccessibleName("Choose output folder")
         self.browse.clicked.connect(self.choose_output)
         output_row.addWidget(self.destination, 1)
         output_row.addWidget(self.browse)
         layout.addLayout(output_row)
+        self.output_name = QLabel("")
+        self.output_name.setWordWrap(True)
+        self.output_name.setStyleSheet("color: #9aa6a2;")
+        layout.addWidget(self.output_name)
         self.phase = QLabel("Ready")
         self.phase.setWordWrap(True)
         layout.addWidget(self.phase)
@@ -191,8 +199,12 @@ class ExportWindow(QMainWindow):
         layout.addLayout(buttons)
         self.mode.currentIndexChanged.connect(self.update_mode)
         self.fps.currentTextChanged.connect(self.update_summary)
+        self.export_frames.toggled.connect(self.update_frame_controls)
+        self.frame_quality.valueChanged.connect(self.update_frame_controls)
+        self.destination.textChanged.connect(self.update_output_name)
         self.restore_settings()
         self.update_mode()
+        self.update_frame_controls()
 
     @staticmethod
     def spin(minimum, maximum, value):
@@ -251,6 +263,13 @@ class ExportWindow(QMainWindow):
     def show_crf_help(self):
         QMessageBox.information(self, f"{self.crf_label.text()} explained", self.crf.toolTip())
 
+    def update_frame_controls(self):
+        enabled = self.export_frames.isChecked()
+        self.frame_quality.setEnabled(enabled)
+        self.frame_quality_label.setEnabled(enabled)
+        self.frame_quality.setSuffix(" (lossless)" if self.frame_quality.value() >= 100 else "")
+        self.update_output_name()
+
     def show_readme(self):
         try:
             contents = readme_text()
@@ -303,7 +322,8 @@ class ExportWindow(QMainWindow):
         self.show_frame(0)
         self.update_summary()
         if not self.destination.text():
-            self.destination.setText(str(sequence.files[0].parent / "output.webm"))
+            self.destination.setText(str(sequence.files[0].parent))
+        self.update_output_name()
 
     def show_frame(self, index):
         if self.sequence is None:
@@ -339,9 +359,26 @@ class ExportWindow(QMainWindow):
                              f"Sequence {self.sequence.start} to {self.sequence.end}")
 
     def choose_output(self):
-        name, _ = QFileDialog.getSaveFileName(self, "Save WebM", self.destination.text(), "WebM video (*.webm)")
-        if name:
-            self.destination.setText(name if Path(name).suffix.lower() == ".webm" else name + ".webm")
+        directory = QFileDialog.getExistingDirectory(self, "Select output folder", self.destination.text())
+        if directory:
+            self.destination.setText(directory)
+            self.update_output_name()
+
+    def output_paths(self):
+        folder = Path(self.destination.text().strip()).expanduser().absolute()
+        webm = folder / f"{self.sequence.stem}.webm"
+        frames = [webm.with_name(f"{webm.stem}_{position}.webp") for position in ("first", "last")]
+        return folder, webm, frames
+
+    def update_output_name(self):
+        if self.sequence is None or not self.destination.text().strip():
+            self.output_name.setText("")
+            return
+        _, webm, frames = self.output_paths()
+        text = f"Output file: {webm.name}"
+        if self.export_frames.isChecked():
+            text += " | WebP frames: " + ", ".join(frame.name for frame in frames)
+        self.output_name.setText(text)
 
     def settings(self):
         return Settings(fps=self.fps.currentText().strip(), crf=self.crf.value(),
@@ -349,7 +386,8 @@ class ExportWindow(QMainWindow):
                         bitrate_kbps=self.bitrate.value(), full_range=self.range.currentIndex() == 0,
                         auto_alt_ref=self.alt_ref.isChecked(), arnr_maxframes=self.arnr.value(),
                         aq_mode=self.aq.currentIndex(), row_mt=self.row_mt.isChecked(),
-                        tile_columns=self.tiles.value(), threads=self.threads.value(), gop=self.gop.value())
+                        tile_columns=self.tiles.value(), threads=self.threads.value(), gop=self.gop.value(),
+                        export_frames=self.export_frames.isChecked(), frame_quality=self.frame_quality.value())
 
     def apply_settings(self, settings):
         self.fps.setCurrentText(settings.fps)
@@ -365,6 +403,8 @@ class ExportWindow(QMainWindow):
         self.tiles.setValue(settings.tile_columns)
         self.threads.setValue(settings.threads)
         self.gop.setValue(settings.gop)
+        self.export_frames.setChecked(settings.export_frames)
+        self.frame_quality.setValue(settings.frame_quality)
 
     def restore_settings(self):
         try:
@@ -388,9 +428,10 @@ class ExportWindow(QMainWindow):
                 raise ValueError("Confirm the source color space and flattened transparency before exporting.")
             settings = self.settings()
             settings.validate()
-            destination = Path(self.destination.text().strip()).expanduser().absolute()
-            if destination.suffix.lower() != ".webm" or not destination.parent.is_dir():
-                raise ValueError("Choose a .webm filename in an existing folder.")
+            folder = Path(self.destination.text().strip()).expanduser().absolute()
+            if not folder.is_dir():
+                raise ValueError("Choose an existing output folder.")
+            destination = folder / f"{self.sequence.stem}.webm"
             signature = file_signature(destination)
             if signature is not None and QMessageBox.question(
                     self, "Replace existing file?", f"Replace {destination.name} after a successful export?",
@@ -442,6 +483,11 @@ class ExportWindow(QMainWindow):
         self.progress.setValue(100)
         self.details.setText(f"{result['size'] / 1_000_000:.3f} MB ({result['size']:,} bytes) | "
                              f"CRF {result['crf']} | {result['trials']} trial(s) | {result['frames']} frames")
+        frame_files = result.get("frame_files")
+        if frame_files:
+            names = ", ".join(Path(path).name for path in frame_files)
+            self.phase.setText("Export complete and verified; frames saved")
+            self.details.setText(self.details.text() + f" | WebP frames: {names}")
         self.open_button.setEnabled(True)
 
     def on_failure(self, message):

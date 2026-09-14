@@ -24,7 +24,7 @@ def smoke_test(application, window, directory):
     window.color_confirm.setChecked(True)
     window.mode.setCurrentIndex(1)
     window.target.setText("0.05")
-    window.destination.setText(str(directory / "smoke.webm"))
+    window.destination.setText(str(directory))
     window.on_failure = lambda message: window.details.setText(message)
 
     def finish():

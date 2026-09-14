@@ -36,6 +36,11 @@ class SequenceTests(unittest.TestCase):
     def test_single(self):
         self.assertEqual(self.sequence(["still.png"]).count, 1)
 
+    def test_stem_derivation(self):
+        self.assertEqual(self.sequence(["shot_v2_[01001].png", "shot_v2_[01002].png"]).stem, "shot_v2")
+        self.assertEqual(self.sequence(["frame_9.png", "frame_10.png"]).stem, "frame")
+        self.assertEqual(self.sequence(["still.png"]).stem, "still")
+
 
 class SearchTests(unittest.TestCase):
     def test_all_integer_thresholds(self):
