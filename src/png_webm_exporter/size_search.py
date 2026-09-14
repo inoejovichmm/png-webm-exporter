@@ -36,16 +36,14 @@ class SizeSearch:
             return None
         if not self.results:
             return self.initial
-        best = self.best
-        if best == 0:
+        overs = [crf for crf, size in self.results.items() if size > self.budget]
+        fits = [crf for crf, size in self.results.items() if size <= self.budget]
+        lower = max(overs) + 1 if overs else 0
+        upper = min(fits) if fits else 63
+        if lower > 63 or (fits and lower >= upper):
             return None
-        if best is None:
-            return 63 if 63 not in self.results else None
-        if 0 not in self.results:
-            return 0
-        lower = max((crf for crf, size in self.results.items()
-                     if crf < best and size > self.budget), default=-1)
-        return (lower + best) // 2 if best - lower > 1 else None
+        candidate = (lower + upper) // 2
+        return candidate if candidate not in self.results else None
 
     def record(self, crf: int, size: int) -> None:
         if not 0 <= crf <= 63 or size <= 0 or crf in self.results:
