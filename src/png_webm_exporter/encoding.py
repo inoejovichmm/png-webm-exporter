@@ -103,6 +103,10 @@ class Canceled(Exception):
     pass
 
 
+class TrialTooLarge(Exception):
+    pass
+
+
 def inspect_frames(sequence: Sequence, canceled: threading.Event, progress) -> tuple[int, int, int]:
     expected = None
     for index, path in enumerate(sequence.files):
@@ -219,6 +223,7 @@ class ExportWorker(QThread):
             output = []
             closed = 0
             terminated_at = None
+            trial_too_large = False
             try:
                 while closed < 2:
                     if self.stop.is_set() and process.poll() is None:
@@ -237,7 +242,11 @@ class ExportWorker(QThread):
                         self.log.append(line)
                         self.log = self.log[-500:]
                     elif on_line:
-                        on_line(line)
+                        if on_line(line):
+                            trial_too_large = True
+                            if process.poll() is None and terminated_at is None:
+                                process.terminate()
+                                terminated_at = time.monotonic()
                     else:
                         output.append(line)
                 code = process.wait()
@@ -253,6 +262,8 @@ class ExportWorker(QThread):
                     reader.join()
             if self.stop.is_set():
                 raise Canceled
+            if trial_too_large:
+                raise TrialTooLarge
             if code:
                 raise RuntimeError(f"{program.name} exited with code {code}.\n" + "\n".join(self.log[-15:]))
             return "\n".join(output)
@@ -307,14 +318,22 @@ class ExportWorker(QThread):
                 key, separator, value = line.partition("=")
                 if separator and key == "frame" and value.strip().isdigit():
                     frame = int(value)
+                    size = candidate.stat().st_size
                     self.update.emit({"phase": label, "percent": min(99, frame * 100 // sequence.count),
-                                      "elapsed": time.monotonic() - started,
-                                      "size": candidate.stat().st_size,
+                                      "elapsed": time.monotonic() - started, "size": size,
                                       "best_size": best_path.stat().st_size if best_path else None})
+                    return search is not None and size > search.budget
 
             args = build_args(sequence, self.settings, candidate, current_crf)
             self.log.append(json.dumps([str(ffmpeg), *args]))
-            self.execute(ffmpeg, args, progress)
+            try:
+                self.execute(ffmpeg, args, progress)
+            except TrialTooLarge:
+                size = candidate.stat().st_size
+                search.record(current_crf, size)
+                candidate.unlink(missing_ok=True)
+                self.owned.discard(candidate)
+                continue
             size = candidate.stat().st_size
             if size <= 0:
                 raise ValueError("FFmpeg produced an empty file.")
