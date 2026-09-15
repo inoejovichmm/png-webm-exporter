@@ -109,7 +109,7 @@ class ExportWindow(QMainWindow):
         crf_layout.addWidget(self.crf_help)
         self.crf_label = self.add_field(form, "CRF", crf_row, "")
         self.target = QLineEdit("10")
-        self.add_field(form, "Target size (MB)", self.target, "Hard cap in decimal megabytes: 1 MB = 1,000,000 bytes, including WebM overhead. Not an exact fill. An impossible target produces an error and leaves the destination unchanged. CRF-to-size is not guaranteed monotonic.")
+        self.add_field(form, "Target size (MB)", self.target, "Hard cap in decimal megabytes: 1 MB = 1,000,000 bytes, including WebM overhead. Not an exact fill. If the target is impossible, the smallest tested video is delivered instead. CRF-to-size is not guaranteed monotonic.")
         self.range = QComboBox()
         self.range.addItems(["Full (0-255)", "Limited (16-235)"])
         self.add_field(form, "Output range", self.range, "Controls RGB-to-YUV conversion and range metadata together. Full is the delivery preset; choose Limited only when required by the playback pipeline. Both use a Rec.709 matrix and tags.")
@@ -248,7 +248,9 @@ class ExportWindow(QMainWindow):
                 "Up to nine full encodes are tried, with bitrate forced to zero. The lowest tested "
                 "CRF that fits the cap is kept and reported after export. The starting point "
                 "changes the search order and can affect runtime and the result of this bounded "
-                "search. File size is not perfectly monotonic, so a global optimum is not guaranteed."
+                "search. If no tested CRF fits, the smallest valid tested video is delivered and "
+                "reported as exceeding the target. File size is not perfectly monotonic, so a "
+                "global optimum is not guaranteed."
             )
         else:
             explanation += (
@@ -478,7 +480,8 @@ class ExportWindow(QMainWindow):
 
     def on_success(self, result):
         self.last_output = Path(result["path"])
-        self.phase.setText("Export complete and verified")
+        self.phase.setText("Export complete and verified" if result.get("target_met", True)
+                           else "Export complete; target exceeded")
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.details.setText(f"{result['size'] / 1_000_000:.3f} MB ({result['size']:,} bytes) | "

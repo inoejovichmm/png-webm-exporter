@@ -31,6 +31,10 @@ class SizeSearch:
         fitting = [crf for crf, size in self.results.items() if size <= self.budget]
         return min(fitting) if fitting else None
 
+    @property
+    def preferred(self) -> int | None:
+        return self.best if self.best is not None else min(self.results, key=self.results.get, default=None)
+
     def next_crf(self) -> int | None:
         if len(self.results) >= self.max_trials:
             return None

@@ -322,7 +322,7 @@ class ExportWorker(QThread):
                     self.update.emit({"phase": label, "percent": min(99, frame * 100 // sequence.count),
                                       "elapsed": time.monotonic() - started, "size": size,
                                       "best_size": best_path.stat().st_size if best_path else None})
-                    return search is not None and size > search.budget
+                    return search is not None and current_crf < 63 and size > search.budget
 
             args = build_args(sequence, self.settings, candidate, current_crf)
             self.log.append(json.dumps([str(ffmpeg), *args]))
@@ -334,12 +334,15 @@ class ExportWorker(QThread):
                 candidate.unlink(missing_ok=True)
                 self.owned.discard(candidate)
                 continue
-            size = candidate.stat().st_size
-            if size <= 0:
-                raise ValueError("FFmpeg produced an empty file.")
-            if search:
-                search.record(current_crf, size)
-            if search is None or search.best == current_crf:
+            else:
+                size = candidate.stat().st_size
+                if size <= 0:
+                    raise ValueError("FFmpeg produced an empty file.")
+                if search:
+                    search.record(current_crf, size)
+            selected_crf = current_crf if search is None else search.preferred
+            fallback = search is not None and search.best is None and current_crf == 63
+            if selected_crf == current_crf or fallback:
                 if best_path:
                     best_path.unlink(missing_ok=True)
                     self.owned.discard(best_path)
@@ -348,15 +351,14 @@ class ExportWorker(QThread):
                 candidate.unlink(missing_ok=True)
                 self.owned.discard(candidate)
         if best_path is None:
-            raise ValueError("Target size was not met by the tested CRF values, including 63. Increase the target or switch to Manual CRF. No output was replaced.")
+            raise ValueError("FFmpeg did not produce a usable output.")
         self.update.emit({"phase": "Verifying complete output", "percent": -1})
         data = self.execute(ffprobe, ["-v", "error", "-count_frames", "-show_streams",
                                       "-show_format", "-of", "json", str(best_path)])
         verify_probe(json.loads(data), sequence, self.settings, dimensions)
         result = {"path": str(self.destination), "size": best_path.stat().st_size, "crf": chosen_crf,
                   "trials": trial, "frames": sequence.count, "duration": float(sequence.count / Fraction(self.settings.fps))}
-        if search and result["size"] > search.budget:
-            raise ValueError("Verified file exceeds the target. No output was replaced.")
+        result["target_met"] = not search or result["size"] <= search.budget
         if file_signature(self.destination) != self.signature:
             self.update.emit({"phase": "Awaiting overwrite confirmation", "percent": -1})
             self.ready.emit("The destination changed during export. Replace it with the verified result?", result)

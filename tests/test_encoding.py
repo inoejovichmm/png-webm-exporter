@@ -51,7 +51,7 @@ def test_real_encode_and_probe(frames, tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
-def test_worker_target_and_failed_target(frames, tmp_path, qtbot):
+def test_worker_target_and_unreachable_target(frames, tmp_path, qtbot):
     output = tmp_path / "output.webm"
     worker = ExportWorker(frames, Settings(target_bytes=20000), output, None)
     with qtbot.waitSignal(worker.succeeded, timeout=60000) as outcome:
@@ -61,10 +61,12 @@ def test_worker_target_and_failed_target(frames, tmp_path, qtbot):
     assert outcome.args[0]["crf"] == 0
     original = output.read_bytes()
     worker = ExportWorker(frames, Settings(target_bytes=1), output, file_signature(output))
-    with qtbot.waitSignal(worker.failed, timeout=60000):
+    with qtbot.waitSignal(worker.succeeded, timeout=60000) as outcome:
         worker.start()
     worker.wait()
-    assert output.read_bytes() == original
+    assert outcome.args[0]["target_met"] is False
+    assert output.read_bytes() != original
+    assert outcome.args[0]["size"] == output.stat().st_size
     assert not list(tmp_path.glob(".png-webm-*"))
 
 
