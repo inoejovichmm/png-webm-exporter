@@ -23,6 +23,14 @@ SOURCES = {
         "url": "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz",
         "sha256": "e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564",
     },
+    "SVT-AV1-v3.0.2.tar.gz": {
+        "url": "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v3.0.2/SVT-AV1-v3.0.2.tar.gz",
+        "sha256": "5af7f4376aa00a4dee32df04be1cdd1983c9940bcc019ee6b29bb8a216bae2f8",
+    },
+    "dav1d-1.5.1.tar.gz": {
+        "url": "https://code.videolan.org/videolan/dav1d/-/archive/1.5.1/dav1d-1.5.1.tar.gz",
+        "sha256": "fa635e2bdb25147b1384007c83e15de44c589582bb3b9a53fc1579cb9d74b695",
+    },
 }
 
 
@@ -38,7 +46,10 @@ def main():
         raise SystemExit("Build on macOS arm64 or Windows x64 in an MSYS2 UCRT64 shell.")
     if system == "Darwin" and platform.machine() != "arm64":
         raise SystemExit("The macOS target is Apple Silicon (arm64).")
-    for tool in ("sh", "make", "pkg-config", "cc"):
+    tools = ["sh", "make", "pkg-config", "cc", "cmake", "meson", "ninja"]
+    if windows:
+        tools.append("nasm")
+    for tool in tools:
         if shutil.which(tool) is None:
             raise SystemExit(f"Missing build tool: {tool}")
     work = ROOT / "build" / "native"
@@ -83,19 +94,39 @@ def main():
     run(webp_args, webp, environment)
     run(["make", "-j", jobs], webp, environment)
     run(["make", "install"], webp, environment)
+    svtav1 = work / "SVT-AV1-v3.0.2"
+    svt_build = svtav1 / "build_static"
+    svt_args = ["cmake", "-S", str(svtav1), "-B", str(svt_build), "-G", "Unix Makefiles",
+                f"-DCMAKE_INSTALL_PREFIX={prefix}", "-DCMAKE_BUILD_TYPE=Release",
+                "-DBUILD_SHARED_LIBS=OFF", "-DBUILD_APPS=OFF", "-DBUILD_TESTING=OFF"]
+    if system == "Darwin":
+        svt_args.append("-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0")
+    run(svt_args, svtav1, environment)
+    run(["cmake", "--build", str(svt_build), "-j", jobs], svtav1, environment)
+    run(["cmake", "--install", str(svt_build)], svtav1, environment)
+    dav1d = work / "dav1d-1.5.1"
+    dav1d_build = dav1d / "build_static"
+    dav1d_args = ["meson", "setup", str(dav1d_build), str(dav1d), f"--prefix={prefix}",
+                  "--default-library=static", "--buildtype=release",
+                  "-Denable_tools=false", "-Denable_tests=false"]
+    if dav1d_build.exists():
+        shutil.rmtree(dav1d_build)
+    run(dav1d_args, dav1d, environment)
+    run(["ninja", "-C", str(dav1d_build)], dav1d, environment)
+    run(["ninja", "-C", str(dav1d_build), "install"], dav1d, environment)
     ffmpeg = work / "ffmpeg-9.0.1"
     ffmpeg_args = ["sh", "./configure", f"--prefix={prefix}", "--disable-everything",
                    "--disable-autodetect", "--disable-network", "--disable-programs",
                    "--enable-ffmpeg", "--enable-ffprobe", "--disable-doc", "--disable-debug",
                    "--disable-shared", "--enable-static",
                    "--enable-w32threads" if windows else "--enable-pthreads",
-                   "--enable-libvpx", "--enable-libwebp",
-                   "--enable-zlib", "--enable-encoder=libvpx_vp9,libwebp",
-                   "--enable-decoder=png,vp9", "--enable-parser=png,vp9",
-                   "--enable-demuxer=image2,matroska",
-                   "--enable-muxer=webm,webp", "--enable-bsf=vp9_superframe",
+                   "--enable-libvpx", "--enable-libwebp", "--enable-libsvtav1", "--enable-libdav1d",
+                   "--enable-zlib", "--enable-encoder=libvpx_vp9,libwebp,libsvtav1,png",
+                   "--enable-decoder=png,vp9,libdav1d", "--enable-parser=png,vp9,av1",
+                   "--enable-demuxer=image2,matroska,mov",
+                   "--enable-muxer=webm,webp,image2,mov", "--enable-bsf=vp9_superframe",
                    "--enable-protocol=file,pipe",
-                   "--enable-filter=scale,format,setparams,select", "--enable-swscale",
+                   "--enable-filter=scale,format,setparams,select,setpts", "--enable-swscale",
                    "--pkg-config-flags=--static"]
     if windows:
         ffmpeg_args += ["--extra-ldflags=-static", "--extra-libs=-lstdc++"]
@@ -116,11 +147,15 @@ def main():
                          (vpx / "LICENSE", "libvpx-LICENSE.txt"),
                          (vpx / "PATENTS", "libvpx-PATENTS.txt"),
                          (webp / "COPYING", "libwebp-LICENSE.txt"),
-                         (webp / "PATENTS", "libwebp-PATENTS.txt")):
+                         (webp / "PATENTS", "libwebp-PATENTS.txt"),
+                         (svtav1 / "LICENSE.md", "SVT-AV1-LICENSE.md"),
+                         (svtav1 / "PATENTS.md", "SVT-AV1-PATENTS.md"),
+                         (dav1d / "COPYING", "dav1d-LICENSE.txt")):
         shutil.copy2(source, notices / name)
     shutil.copy2(__file__, notices / "build_ffmpeg.py")
     metadata = {"platform": platform.platform(), "sources": SOURCES,
-                "configure": {"libvpx": vpx_args, "libwebp": webp_args, "ffmpeg": ffmpeg_args},
+                "configure": {"libvpx": vpx_args, "libwebp": webp_args, "svtav1": svt_args,
+                              "dav1d": dav1d_args, "ffmpeg": ffmpeg_args},
                 "binaries": binaries}
     (notices / "build-manifest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"Built binaries and notices in {vendor}")

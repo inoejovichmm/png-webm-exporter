@@ -44,6 +44,9 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-zlib
       - name: Exclude build directory from Windows Defender
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -100,7 +103,7 @@ jobs:
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('tools/build_ffmpeg.py') }}
       - name: Install native build tools
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        run: brew install pkg-config nasm
+        run: brew install pkg-config nasm cmake meson ninja
       - name: Build pinned FFmpeg sources
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: python tools/build_ffmpeg.py

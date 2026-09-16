@@ -55,6 +55,54 @@ def test_movie_args(tmp_path):
     assert video_filter.startswith("setpts=N*1001/24000/TB,scale=out_color_matrix=bt709")
 
 
+VENDOR_BIN = Path(__file__).resolve().parents[1] / "vendor" / "bin"
+
+
+def bundled(name):
+    exe = VENDOR_BIN / (name + (".exe" if sys.platform == "win32" else ""))
+    return str(exe) if exe.is_file() else None
+
+
+def has_bundled_av1():
+    ffmpeg = bundled("ffmpeg")
+    if not ffmpeg:
+        return False
+    encoders = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True).stdout
+    return b"libsvtav1" in encoders
+
+
+def test_av1_build_args(frames, tmp_path):
+    settings = Settings(codec="av1", fps="25", preset=8, fgs_level=8, fgs_denoise=False)
+    args = build_args(detect_sequence(frames[:3]), settings, tmp_path / "out.webm", 30)
+    assert args[args.index("-c:v") + 1] == "libsvtav1"
+    assert args[args.index("-crf") + 1] == "30"
+    assert args[args.index("-b:v") + 1] == "0"
+    assert args[args.index("-preset") + 1] == "8"
+    params = args[args.index("-svtav1-params") + 1]
+    assert "film-grain=8" in params
+    assert "film-grain-denoise=0" in params
+    assert "color-range=1" in params
+
+
+def test_av1_fgs_toggle_omits_grain(frames, tmp_path):
+    settings = Settings(codec="av1", fgs_enabled=False, fgs_level=8)
+    args = build_args(detect_sequence(frames[:3]), settings, tmp_path / "out.webm", 30)
+    params = args[args.index("-svtav1-params") + 1]
+    assert "film-grain=" not in params
+    assert "color-range=1" in params
+
+
+def test_av1_settings_validation():
+    Settings(codec="av1", preset=13, fgs_level=50).validate()
+    with pytest.raises(ValueError):
+        Settings(codec="av1", preset=14).validate()
+    with pytest.raises(ValueError):
+        Settings(codec="av1", fgs_level=51).validate()
+    with pytest.raises(ValueError):
+        Settings(codec="h264").validate()
+
+
+
 def test_transparency_rejected(tmp_path):
     path = tmp_path / "frame.png"
     Image.new("RGBA", (32, 32), (20, 30, 40, 128)).save(path)
@@ -100,6 +148,20 @@ def test_real_encode_and_probe(frames, tmp_path):
     encoded = subprocess.run([shutil.which("ffmpeg"), *build_args(sequence, settings, output, 12)], capture_output=True, text=True)
     assert encoded.returncode == 0, encoded.stderr
     probe = subprocess.check_output([shutil.which("ffprobe"), "-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", str(output)])
+    verify_probe(json.loads(probe), sequence, settings, dimensions)
+    assert output.stat().st_size > 0
+
+
+@pytest.mark.skipif(not has_bundled_av1(), reason="bundled AV1 encoder required")
+def test_real_av1_encode_and_probe(frames, tmp_path):
+    ffmpeg, ffprobe = bundled("ffmpeg"), bundled("ffprobe")
+    sequence = detect_sequence(frames[:3])
+    settings = Settings(codec="av1", fps="25", preset=10, fgs_level=6)
+    dimensions = inspect_frames(sequence, threading.Event(), lambda *_: None)
+    output = tmp_path / "av1.webm"
+    encoded = subprocess.run([ffmpeg, *build_args(sequence, settings, output, 40)], capture_output=True, text=True)
+    assert encoded.returncode == 0, encoded.stderr
+    probe = subprocess.check_output([ffprobe, "-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", str(output)])
     verify_probe(json.loads(probe), sequence, settings, dimensions)
     assert output.stat().st_size > 0
 

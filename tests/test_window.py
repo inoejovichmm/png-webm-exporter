@@ -21,42 +21,44 @@ def window(qtbot, tmp_path, monkeypatch):
 
 
 def test_target_controls_and_reset(window):
-    assert not window.target.isEnabled()
-    assert not window.target.isVisible()
-    assert not window.delivery_form.labelForField(window.target).isVisible()
-    assert window.crf_label.text() == "CRF"
-    window.mode.setCurrentIndex(1)
-    assert window.target.isEnabled()
-    assert window.target.isVisible()
-    assert window.delivery_form.labelForField(window.target).isVisible()
-    assert window.crf_label.text() == "Initial CRF"
-    assert not window.bitrate.isEnabled()
-    window.crf.setValue(20)
+    panel = window.active_panel()
+    assert not panel.target.isEnabled()
+    assert not panel.target.isVisible()
+    assert not panel.delivery_form.labelForField(panel.target).isVisible()
+    assert panel.crf_label.text() == "CRF"
+    panel.mode.setCurrentIndex(1)
+    assert panel.target.isEnabled()
+    assert panel.target.isVisible()
+    assert panel.delivery_form.labelForField(panel.target).isVisible()
+    assert panel.crf_label.text() == "Initial CRF"
+    assert not panel.bitrate.isEnabled()
+    panel.crf.setValue(20)
     assert window.settings().crf == 20
-    window.target.setText("2.5")
+    panel.target.setText("2.5")
     assert window.settings().target_bytes == 2_500_000
-    window.mode.setCurrentIndex(0)
-    window.target.setText("invalid hidden target")
+    panel.mode.setCurrentIndex(0)
+    panel.target.setText("invalid hidden target")
     assert window.settings().target_bytes is None
-    assert window.crf_label.text() == "CRF"
+    assert panel.crf_label.text() == "CRF"
     window.reset_settings()
     assert window.settings().crf == 12
     assert window.settings().target_bytes is None
-    assert not window.target.isVisible()
+    assert not panel.target.isVisible()
 
 
 def test_crf_help_matches_mode(window, monkeypatch):
+    panel = window.active_panel()
     messages = []
     monkeypatch.setattr(QMessageBox, "information", lambda parent, title, message: messages.append((title, message)))
-    window.crf_help.click()
+    panel.crf_help.click()
     assert messages[-1][0] == "CRF explained"
     assert "Constant Rate Factor" in messages[-1][1]
     assert "one encode uses the value you choose" in messages[-1][1]
-    window.mode.setCurrentIndex(1)
-    window.crf_help.click()
+    panel.mode.setCurrentIndex(1)
+    panel.crf_help.click()
     assert messages[-1][0] == "Initial CRF explained"
     assert "used only for the first trial" in messages[-1][1]
-    assert "not a quality limit" in messages[-1][1]
+    assert "global optimum is not guaranteed" in messages[-1][1]
 
 
 def test_readme_viewer(window):
@@ -85,10 +87,10 @@ def test_compact_layout(window, qtbot):
     qtbot.wait(20)
     assert window.preview.geometry().bottom() < window.scrubber.geometry().top()
     assert window.color_confirm.geometry().bottom() < window.inputs.height()
-    window.tabs.setCurrentIndex(1)
+    window.active_panel().tabs.setCurrentIndex(1)
     qtbot.wait(20)
-    assert window.gop.width() >= 100
-    assert window.gop.specialValueText() == "Auto"
+    assert window.active_panel().gop.width() >= 100
+    assert window.active_panel().gop.specialValueText() == "Auto"
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
@@ -102,8 +104,9 @@ def test_gui_export(window, qtbot, tmp_path):
     window.scrubber.setValue(2)
     assert "3 / 3" in window.frame_name.text()
     window.color_confirm.setChecked(True)
-    window.mode.setCurrentIndex(1)
-    window.target.setText("0.02")
+    panel = window.active_panel()
+    panel.mode.setCurrentIndex(1)
+    panel.target.setText("0.02")
     window.destination.setText(str(tmp_path))
     destination = tmp_path / "frame.webm"
     window.start_export()

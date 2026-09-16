@@ -21,6 +21,7 @@ from .size_search import SizeSearch
 @dataclass(frozen=True)
 class Settings:
     fps: str = "25"
+    codec: str = "vp9"
     crf: int = 12
     target_bytes: int | None = None
     bitrate_kbps: int = 0
@@ -32,10 +33,16 @@ class Settings:
     tile_columns: int = 2
     threads: int = 8
     gop: int = 0
+    preset: int = 8
+    fgs_enabled: bool = True
+    fgs_level: int = 8
+    fgs_denoise: bool = False
     export_frames: bool = False
     frame_quality: int = 90
 
     def validate(self) -> None:
+        if self.codec not in ("vp9", "av1"):
+            raise ValueError("Encoder must be either vp9 or av1.")
         try:
             fps = Fraction(self.fps)
         except (ValueError, ZeroDivisionError) as error:
@@ -48,6 +55,8 @@ class Settings:
             ("Adaptive quantization", self.aq_mode, 0, 4),
             ("Tile exponent", self.tile_columns, 0, 6), ("Threads", self.threads, 0, 256),
             ("Keyframe distance", self.gop, 0, 1_000_000),
+            ("Encoder preset", self.preset, 0, 13),
+            ("Film grain level", self.fgs_level, 0, 50),
             ("Frame WebP quality", self.frame_quality, 0, 100),
         ):
             if not isinstance(value, int) or not minimum <= value <= maximum:
@@ -78,14 +87,27 @@ def build_args(source: Sequence | MovieSource, settings: Settings, output: Path,
         else:
             args += ["-start_number", str(source.start), "-start_number_range", "1"]
         args += ["-i", source.pattern, "-map", "0:v:0", "-frames:v", str(source.count), "-vf", scale]
-    args += ["-c:v", "libvpx-vp9", "-profile:v", "0", "-crf", str(crf),
-             "-b:v", "0" if settings.target_bytes is not None else f"{settings.bitrate_kbps}k",
-             "-color_range", "pc" if settings.full_range else "tv",
-             "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
-             "-auto-alt-ref", str(int(settings.auto_alt_ref)),
-             "-arnr-maxframes", str(settings.arnr_maxframes), "-aq-mode", str(settings.aq_mode),
-             "-row-mt", str(int(settings.row_mt)), "-tile-columns", str(settings.tile_columns),
-             "-threads", str(settings.threads)]
+    if settings.codec == "av1":
+        svt = ["color-primaries=1", "transfer-characteristics=1", "matrix-coefficients=1",
+               f"color-range={1 if settings.full_range else 0}"]
+        if settings.fgs_enabled and settings.fgs_level > 0:
+            svt += [f"film-grain={settings.fgs_level}", f"film-grain-denoise={int(settings.fgs_denoise)}"]
+        if settings.threads:
+            svt.append(f"lp={settings.threads}")
+        args += ["-c:v", "libsvtav1", "-b:v", "0", "-crf", str(crf),
+                 "-preset", str(settings.preset), "-pix_fmt", "yuv420p",
+                 "-color_range", "pc" if settings.full_range else "tv",
+                 "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                 "-svtav1-params", ":".join(svt)]
+    else:
+        args += ["-c:v", "libvpx-vp9", "-profile:v", "0", "-crf", str(crf),
+                 "-b:v", "0" if settings.target_bytes is not None else f"{settings.bitrate_kbps}k",
+                 "-color_range", "pc" if settings.full_range else "tv",
+                 "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                 "-auto-alt-ref", str(int(settings.auto_alt_ref)),
+                 "-arnr-maxframes", str(settings.arnr_maxframes), "-aq-mode", str(settings.aq_mode),
+                 "-row-mt", str(int(settings.row_mt)), "-tile-columns", str(settings.tile_columns),
+                 "-threads", str(settings.threads)]
     if settings.gop:
         args += ["-g", str(settings.gop)]
     return args + ["-an", "-f", "webm", str(output)]
@@ -230,10 +252,16 @@ def verify_probe(data: dict, sequence: Sequence, settings: Settings, dimensions:
     if len(streams) != 1 or streams[0].get("codec_type") != "video":
         raise ValueError("Output must contain exactly one video stream and no audio.")
     video = streams[0]
-    expected = {"codec_name": "vp9", "profile": "Profile 0", "pix_fmt": "yuv420p",
-                "color_range": "pc" if settings.full_range else "tv", "color_space": "bt709",
-                "color_transfer": "bt709", "color_primaries": "bt709",
-                "width": dimensions[0], "height": dimensions[1]}
+    if settings.codec == "av1":
+        expected = {"codec_name": "av1", "profile": "Main", "pix_fmt": "yuv420p",
+                    "color_range": "pc" if settings.full_range else "tv", "color_space": "bt709",
+                    "color_transfer": "bt709", "color_primaries": "bt709",
+                    "width": dimensions[0], "height": dimensions[1]}
+    else:
+        expected = {"codec_name": "vp9", "profile": "Profile 0", "pix_fmt": "yuv420p",
+                    "color_range": "pc" if settings.full_range else "tv", "color_space": "bt709",
+                    "color_transfer": "bt709", "color_primaries": "bt709",
+                    "width": dimensions[0], "height": dimensions[1]}
     for key, value in expected.items():
         if video.get(key) != value:
             raise ValueError(f"Output verification failed: {key} is {video.get(key)!r}, expected {value!r}.")
@@ -371,8 +399,9 @@ class ExportWorker(QThread):
             raise ValueError("The output folder does not exist.")
         ffmpeg, ffprobe = binary_path("ffmpeg"), binary_path("ffprobe")
         encoders = self.execute(ffmpeg, ["-hide_banner", "-encoders"])
-        if "libvpx-vp9" not in encoders:
-            raise ValueError("This FFmpeg build does not include libvpx-vp9.")
+        required = "libsvtav1" if self.settings.codec == "av1" else "libvpx-vp9"
+        if required not in encoders:
+            raise ValueError(f"This FFmpeg build does not include {required}.")
         if self.settings.export_frames and "libwebp" not in encoders:
             raise ValueError("This FFmpeg build does not include libwebp; frame export is unavailable.")
         search = SizeSearch(self.settings.target_bytes, self.settings.crf) if self.settings.target_bytes else None
