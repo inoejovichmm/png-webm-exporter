@@ -16,6 +16,16 @@ class Sequence:
         return len(self.files)
 
 
+@dataclass(frozen=True)
+class MovieSource:
+    path: Path
+    count: int
+    width: int
+    height: int
+    depth: int
+    stem: str = "output"
+
+
 def clean_stem(text: str) -> str:
     stem = Path(text).stem.strip(" _-.#[](){}")
     return stem or "output"

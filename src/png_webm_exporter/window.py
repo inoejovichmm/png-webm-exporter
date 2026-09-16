@@ -2,19 +2,20 @@ from dataclasses import asdict
 from fractions import Fraction
 import json
 from pathlib import Path
+import tempfile
 
 from PySide6.QtCore import QEvent, Qt, QSettings, QUrl
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QAction, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
+    QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
-from .encoding import ExportWorker, Settings, file_signature
+from .encoding import ExportWorker, Settings, extract_poster, file_signature, inspect_movie
 from .resources import readme_text
-from .sequence import detect_sequence
+from .sequence import MovieSource, detect_sequence
 from .size_search import megabytes_to_bytes
 
 
@@ -52,13 +53,20 @@ class ExportWindow(QMainWindow):
         columns.setSpacing(24)
         source = QVBoxLayout()
         select_row = QHBoxLayout()
-        self.choose = QPushButton("Select PNG frames")
-        self.choose.clicked.connect(self.choose_frames)
-        select_row.addWidget(self.choose)
-        self.choose_dir = QPushButton("Select folder")
-        self.choose_dir.setToolTip("Select a folder that contains only the PNG frames to encode.")
-        self.choose_dir.clicked.connect(self.choose_folder)
-        select_row.addWidget(self.choose_dir)
+        self.choose_input = QPushButton("Select input...")
+        self.choose_input.setToolTip("Choose a PNG sequence folder with frames or a single QuickTime PNG movie.")
+        input_menu = QMenu(self.choose_input)
+        folder_action = QAction("PNG sequence folder with frames", self.choose_input)
+        folder_action.triggered.connect(self.choose_folder)
+        movie_action = QAction("QuickTime PNG", self.choose_input)
+        movie_action.triggered.connect(self.choose_movie)
+        input_menu.addAction(folder_action)
+        input_menu.addAction(movie_action)
+        self.choose_input.setMenu(input_menu)
+        select_row.addWidget(self.choose_input, 1)
+        self.input_help = self.help_button("How to export either input from After Effects",
+                                            self.show_input_help)
+        select_row.addWidget(self.input_help)
         source.addLayout(select_row)
         self.preview = QLabel("No frames selected")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -224,6 +232,13 @@ class ExportWindow(QMainWindow):
         form.addRow(label, control)
         return label
 
+    def help_button(self, description, handler):
+        button = QPushButton("How to export")
+        button.setToolTip(description)
+        button.setAccessibleName(description)
+        button.clicked.connect(handler)
+        return button
+
     def update_mode(self):
         target_mode = self.mode.currentIndex() == 1
         self.delivery_form.setRowVisible(self.target, target_mode)
@@ -265,6 +280,33 @@ class ExportWindow(QMainWindow):
     def show_crf_help(self):
         QMessageBox.information(self, f"{self.crf_label.text()} explained", self.crf.toolTip())
 
+    def show_input_help(self):
+        QMessageBox.information(self, "Export either input from After Effects",
+            "PNG sequence folder with frames\n\n"
+            "1. Select your composition, then choose Composition > Add to Render Queue.\n"
+            "2. Click the Output Module (the blue text next to \"Output Module\").\n"
+            "3. Set Format to \"PNG Sequence\".\n"
+            "4. Set Channels to \"RGB\" (not RGB + Alpha). This app does not use alpha, so flatten "
+            "any transparency onto a solid background in your comp first.\n"
+            "5. Set Depth to \"Millions of Colors\" (8-bit) or, for a 16-bit master, "
+            "\"Trillions of Colors\".\n"
+            "6. Click OK, set the Output To folder to an empty folder, and render.\n"
+            "7. Back here, choose \"PNG sequence folder with frames\" and select that folder. It must "
+            "contain only the frames of one sequence, numbered consecutively with no gaps.\n\n"
+            "QuickTime PNG movie (single file)\n\n"
+            "1. Select your composition, then choose Composition > Add to Render Queue.\n"
+            "2. Click the Output Module (the blue text next to \"Output Module\").\n"
+            "3. Set Format to \"QuickTime\".\n"
+            "4. Click \"Format Options...\" and set the Video Codec to \"PNG\", then click OK.\n"
+            "5. Set Channels to \"RGB\" (not RGB + Alpha). This app rejects movies that carry an "
+            "alpha channel, so flatten any transparency onto a solid background in your comp first.\n"
+            "6. Set Depth to \"Millions of Colors\" (8-bit) or, for a 16-bit master, "
+            "\"Trillions of Colors\".\n"
+            "7. Click OK, set the Output To file (a .mov), and render.\n"
+            "8. Back here, choose \"QuickTime PNG\" and select that .mov file.\n\n"
+            "Both: work in an sRGB / Rec.709 project. This app tags output as Rec.709 and does not "
+            "convert ICC profiles, so P3 or HDR sources will look wrong.")
+
     def update_frame_controls(self):
         enabled = self.export_frames.isChecked()
         self.frame_quality.setEnabled(enabled)
@@ -295,11 +337,6 @@ class ExportWindow(QMainWindow):
         self.readme_dialog.raise_()
         self.readme_dialog.activateWindow()
 
-    def choose_frames(self):
-        names, _ = QFileDialog.getOpenFileNames(self, "Select consecutive PNG frames", "", "PNG frames (*.png *.PNG)")
-        if names:
-            self.set_frames([Path(name) for name in names])
-
     def choose_folder(self):
         directory = QFileDialog.getExistingDirectory(self, "Select a folder of PNG frames")
         if not directory:
@@ -311,6 +348,12 @@ class ExportWindow(QMainWindow):
             return
         self.set_frames(pngs)
 
+    def choose_movie(self):
+        name, _ = QFileDialog.getOpenFileName(self, "Select a QuickTime PNG movie", "",
+                                              "QuickTime PNG movie (*.mov *.MOV)")
+        if name:
+            self.set_movie(Path(name))
+
     def set_frames(self, paths):
         try:
             sequence = detect_sequence(paths)
@@ -319,6 +362,7 @@ class ExportWindow(QMainWindow):
             return
         self.sequence = sequence
         self.color_confirm.setChecked(False)
+        self.scrubber.setEnabled(True)
         self.scrubber.setRange(0, sequence.count - 1)
         self.scrubber.setValue(0)
         self.show_frame(0)
@@ -327,8 +371,37 @@ class ExportWindow(QMainWindow):
             self.destination.setText(str(sequence.files[0].parent))
         self.update_output_name()
 
+    def set_movie(self, path):
+        try:
+            source = inspect_movie(path)
+        except (ValueError, OSError) as error:
+            QMessageBox.warning(self, "Cannot use movie", str(error))
+            return
+        self.sequence = source
+        self.color_confirm.setChecked(False)
+        self.scrubber.setRange(0, 0)
+        self.scrubber.setValue(0)
+        self.scrubber.setEnabled(False)
+        self.load_movie_poster(source)
+        self.update_summary()
+        if not self.destination.text():
+            self.destination.setText(str(source.path.parent))
+        self.update_output_name()
+
+    def load_movie_poster(self, source):
+        self.source_pixmap = QPixmap()
+        try:
+            with tempfile.TemporaryDirectory(prefix="png-webm-poster-") as folder:
+                poster = Path(folder) / "poster.png"
+                extract_poster(source.path, poster)
+                self.source_pixmap = QPixmap(str(poster))
+        except (OSError, ValueError):
+            self.source_pixmap = QPixmap()
+        self.frame_name.setText(f"QuickTime PNG movie: {source.path.name}")
+        self.scale_preview()
+
     def show_frame(self, index):
-        if self.sequence is None:
+        if self.sequence is None or isinstance(self.sequence, MovieSource):
             return
         path = self.sequence.files[index]
         self.source_pixmap = QPixmap(str(path))
@@ -356,9 +429,14 @@ class ExportWindow(QMainWindow):
             duration = f"{float(self.sequence.count / rate):.3f} s" if rate > 0 else "Invalid FPS"
         except (ValueError, ZeroDivisionError):
             duration = "Invalid FPS"
-        self.summary.setText(f"{self.sequence.count} frames | {duration}\n"
-                             f"{self.source_pixmap.width()} x {self.source_pixmap.height()} px\n"
-                             f"Sequence {self.sequence.start} to {self.sequence.end}")
+        if isinstance(self.sequence, MovieSource):
+            self.summary.setText(f"{self.sequence.count} frames | {duration}\n"
+                                 f"{self.sequence.width} x {self.sequence.height} px | {self.sequence.depth}-bit RGB\n"
+                                 f"QuickTime PNG movie")
+        else:
+            self.summary.setText(f"{self.sequence.count} frames | {duration}\n"
+                                 f"{self.source_pixmap.width()} x {self.source_pixmap.height()} px\n"
+                                 f"Sequence {self.sequence.start} to {self.sequence.end}")
 
     def choose_output(self):
         directory = QFileDialog.getExistingDirectory(self, "Select output folder", self.destination.text())
@@ -425,7 +503,7 @@ class ExportWindow(QMainWindow):
             return
         try:
             if self.sequence is None:
-                raise ValueError("Select PNG frames first.")
+                raise ValueError("Select a folder of PNG frames or a QuickTime PNG movie first.")
             if not self.color_confirm.isChecked():
                 raise ValueError("Confirm the source color space and flattened transparency before exporting.")
             settings = self.settings()
@@ -448,7 +526,7 @@ class ExportWindow(QMainWindow):
         self.open_button.setEnabled(False)
         if self.worker is not None:
             self.worker.deleteLater()
-        self.worker = ExportWorker(list(self.sequence.files), settings, destination, signature, self)
+        self.worker = ExportWorker(self.sequence, settings, destination, signature, self)
         self.worker.update.connect(self.on_progress)
         self.worker.succeeded.connect(self.on_success)
         self.worker.failed.connect(self.on_failure)

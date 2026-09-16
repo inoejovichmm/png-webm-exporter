@@ -14,7 +14,7 @@ from PIL import Image
 from PySide6.QtCore import QThread, Signal
 
 from .resources import binary_path
-from .sequence import Sequence, detect_sequence
+from .sequence import Sequence, MovieSource, clean_stem, detect_sequence
 from .size_search import SizeSearch
 
 
@@ -56,21 +56,29 @@ class Settings:
             raise ValueError("Target size must be positive.")
 
 
-def build_args(sequence: Sequence, settings: Settings, output: Path, crf: int) -> list[str]:
+def build_args(source: Sequence | MovieSource, settings: Settings, output: Path, crf: int) -> list[str]:
     settings.validate()
     if not 0 <= crf <= 63:
         raise ValueError("CRF must be between 0 and 63.")
-    fps = str(Fraction(settings.fps))
-    args = ["-hide_banner", "-nostdin", "-nostats", "-y", "-xerror",
-            "-progress", "pipe:1", "-f", "image2", "-framerate", fps]
-    if sequence.count == 1:
-        args += ["-pattern_type", "none"]
+    rate = Fraction(settings.fps)
+    fps = str(rate)
+    range_name = "full" if settings.full_range else "limited"
+    scale = (f"scale=out_color_matrix=bt709:out_range={range_name},format=yuv420p,"
+             f"setparams=range={range_name}:color_primaries=bt709:color_trc=bt709:colorspace=bt709")
+    args = ["-hide_banner", "-nostdin", "-nostats", "-y", "-xerror", "-progress", "pipe:1"]
+    if isinstance(source, MovieSource):
+        # Re-time every decoded frame onto the chosen constant frame rate, ignoring the movie's own timing.
+        retime = f"setpts=N*{rate.denominator}/{rate.numerator}/TB"
+        args += ["-i", str(source.path), "-map", "0:v:0", "-frames:v", str(source.count),
+                 "-vf", retime + "," + scale, "-r", fps]
     else:
-        args += ["-start_number", str(sequence.start), "-start_number_range", "1"]
-    args += ["-i", sequence.pattern, "-map", "0:v:0", "-frames:v", str(sequence.count),
-             "-vf", f"scale=out_color_matrix=bt709:out_range={'full' if settings.full_range else 'limited'},format=yuv420p,"
-             f"setparams=range={'full' if settings.full_range else 'limited'}:color_primaries=bt709:color_trc=bt709:colorspace=bt709",
-             "-c:v", "libvpx-vp9", "-profile:v", "0", "-crf", str(crf),
+        args += ["-f", "image2", "-framerate", fps]
+        if source.count == 1:
+            args += ["-pattern_type", "none"]
+        else:
+            args += ["-start_number", str(source.start), "-start_number_range", "1"]
+        args += ["-i", source.pattern, "-map", "0:v:0", "-frames:v", str(source.count), "-vf", scale]
+    args += ["-c:v", "libvpx-vp9", "-profile:v", "0", "-crf", str(crf),
              "-b:v", "0" if settings.target_bytes is not None else f"{settings.bitrate_kbps}k",
              "-color_range", "pc" if settings.full_range else "tv",
              "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
@@ -142,6 +150,73 @@ def inspect_frames(sequence: Sequence, canceled: threading.Event, progress) -> t
     return expected[:3]
 
 
+MOVIE_PIXEL_DEPTHS = {"rgb24": 8, "rgb48be": 16, "rgb48le": 16}
+MOVIE_ALPHA_FORMATS = {"rgba", "argb", "abgr", "bgra", "rgba64be", "rgba64le",
+                       "ya8", "ya16be", "ya16le", "gbrap", "gbrap16be", "gbrap16le"}
+
+
+def _run_ffprobe(arguments: list[str]) -> str:
+    ffprobe = binary_path("ffprobe")
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    result = subprocess.run([str(ffprobe), *arguments], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=flags, timeout=300)
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise ValueError("Could not read the movie file." + (f"\n{detail[-1]}" if detail else ""))
+    return result.stdout.decode("utf-8", "replace")
+
+
+def inspect_movie(path: Path) -> MovieSource:
+    path = Path(path).absolute()
+    if not path.is_file():
+        raise ValueError("The selected movie file no longer exists.")
+    data = json.loads(_run_ffprobe(["-v", "error", "-select_streams", "v",
+                                    "-show_streams", "-show_format", "-of", "json", str(path)]))
+    videos = [stream for stream in data.get("streams", []) if stream.get("codec_type") == "video"]
+    if len(videos) != 1:
+        raise ValueError("Select a movie with exactly one video stream and no other streams.")
+    video = videos[0]
+    if video.get("codec_name") != "png":
+        raise ValueError("Only QuickTime PNG movies are supported. Export from After Effects "
+                         "as QuickTime with the PNG codec (codec_name must be png).")
+    pixel_format = video.get("pix_fmt")
+    if pixel_format in MOVIE_ALPHA_FORMATS:
+        raise ValueError("The movie carries an alpha channel. Export QuickTime PNG without alpha "
+                         "(Trillions of Colors, not Trillions of Colors+).")
+    if pixel_format not in MOVIE_PIXEL_DEPTHS:
+        raise ValueError(f"Unsupported pixel format {pixel_format!r}. Export QuickTime PNG as RGB "
+                         "at 8 or 16 bits per channel without alpha.")
+    width, height = video.get("width", 0), video.get("height", 0)
+    if not (isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0):
+        raise ValueError("Could not determine the movie's frame dimensions.")
+    if width % 2 or height % 2:
+        raise ValueError(f"Use even frame dimensions for this delivery preset: {width} x {height}.")
+    count = _movie_frame_count(path, video)
+    if count < 1:
+        raise ValueError("The movie contains no decodable frames.")
+    return MovieSource(path, count, width, height, MOVIE_PIXEL_DEPTHS[pixel_format], clean_stem(path.name))
+
+
+def _movie_frame_count(path: Path, video: dict) -> int:
+    frames = str(video.get("nb_frames", "")).strip()
+    if frames.isdigit() and int(frames) > 0:
+        return int(frames)
+    data = json.loads(_run_ffprobe(["-v", "error", "-select_streams", "v", "-count_frames",
+                                    "-show_entries", "stream=nb_read_frames", "-of", "json", str(path)]))
+    counted = str(data.get("streams", [{}])[0].get("nb_read_frames", "")).strip()
+    return int(counted) if counted.isdigit() else 0
+
+
+def extract_poster(path: Path, output: Path) -> None:
+    ffmpeg = binary_path("ffmpeg")
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    subprocess.run([str(ffmpeg), "-hide_banner", "-nostdin", "-y", "-i", str(path),
+                    "-map", "0:v:0", "-frames:v", "1", "-f", "image2", str(output)],
+                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                   creationflags=flags, timeout=120, check=True)
+
+
 def file_signature(path: Path) -> tuple[int, int, int, int] | None:
     try:
         info = path.stat()
@@ -179,10 +254,10 @@ class ExportWorker(QThread):
     canceled = Signal()
     ready = Signal(str, dict)
 
-    def __init__(self, paths: list[Path], settings: Settings, destination: Path,
+    def __init__(self, source: Sequence | MovieSource, settings: Settings, destination: Path,
                  signature, parent=None):
         super().__init__(parent)
-        self.paths = paths
+        self.source = source
         self.settings = settings
         self.destination = destination.absolute()
         self.signature = signature
@@ -281,10 +356,15 @@ class ExportWorker(QThread):
 
     def perform(self) -> None:
         self.settings.validate()
-        sequence = detect_sequence(self.paths)
-        self.update.emit({"phase": "Validating PNG frames", "percent": 0})
-        dimensions = inspect_frames(sequence, self.stop, lambda done, total:
-                                    self.update.emit({"phase": "Validating PNG frames", "percent": done * 100 // total}))
+        if isinstance(self.source, MovieSource):
+            self.update.emit({"phase": "Validating QuickTime PNG movie", "percent": -1})
+            source = inspect_movie(self.source.path)
+            dimensions = (source.width, source.height, source.depth)
+        else:
+            source = detect_sequence(list(self.source.files))
+            self.update.emit({"phase": "Validating PNG frames", "percent": 0})
+            dimensions = inspect_frames(source, self.stop, lambda done, total:
+                                        self.update.emit({"phase": "Validating PNG frames", "percent": done * 100 // total}))
         if self.destination.suffix.lower() != ".webm":
             raise ValueError("Choose an output filename ending in .webm.")
         if not self.destination.parent.is_dir():
@@ -319,12 +399,12 @@ class ExportWorker(QThread):
                 if separator and key == "frame" and value.strip().isdigit():
                     frame = int(value)
                     size = candidate.stat().st_size
-                    self.update.emit({"phase": label, "percent": min(99, frame * 100 // sequence.count),
+                    self.update.emit({"phase": label, "percent": min(99, frame * 100 // source.count),
                                       "elapsed": time.monotonic() - started, "size": size,
                                       "best_size": best_path.stat().st_size if best_path else None})
                     return search is not None and current_crf < 63 and size > search.budget
 
-            args = build_args(sequence, self.settings, candidate, current_crf)
+            args = build_args(source, self.settings, candidate, current_crf)
             self.log.append(json.dumps([str(ffmpeg), *args]))
             try:
                 self.execute(ffmpeg, args, progress)
@@ -355,9 +435,9 @@ class ExportWorker(QThread):
         self.update.emit({"phase": "Verifying complete output", "percent": -1})
         data = self.execute(ffprobe, ["-v", "error", "-count_frames", "-show_streams",
                                       "-show_format", "-of", "json", str(best_path)])
-        verify_probe(json.loads(data), sequence, self.settings, dimensions)
+        verify_probe(json.loads(data), source, self.settings, dimensions)
         result = {"path": str(self.destination), "size": best_path.stat().st_size, "crf": chosen_crf,
-                  "trials": trial, "frames": sequence.count, "duration": float(sequence.count / Fraction(self.settings.fps))}
+                  "trials": trial, "frames": source.count, "duration": float(source.count / Fraction(self.settings.fps))}
         result["target_met"] = not search or result["size"] <= search.budget
         if file_signature(self.destination) != self.signature:
             self.update.emit({"phase": "Awaiting overwrite confirmation", "percent": -1})
@@ -372,7 +452,7 @@ class ExportWorker(QThread):
         os.replace(best_path, self.destination)
         self.owned.discard(best_path)
         if self.settings.export_frames:
-            result["frame_files"] = self.export_boundary_frames(ffmpeg, sequence.count)
+            result["frame_files"] = self.export_boundary_frames(ffmpeg, source.count)
         self.succeeded.emit(result)
 
     def export_boundary_frames(self, ffmpeg: Path, frame_count: int) -> list[str]:
