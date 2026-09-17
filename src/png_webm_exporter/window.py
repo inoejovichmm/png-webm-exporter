@@ -7,9 +7,9 @@ import tempfile
 from PySide6.QtCore import QEvent, Qt, QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QTabWidget,
+    QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QStackedWidget, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -308,13 +308,28 @@ class ExportWindow(QMainWindow):
         source.addWidget(self.color_confirm)
         source.addStretch()
         columns.addLayout(source, 1)
-        self.codec_tabs = QTabWidget()
+        self.codec_toggle = QButtonGroup(self)
+        codec_switch = QHBoxLayout()
+        codec_switch.setSpacing(0)
+        self.vp9_button = QRadioButton("VP9")
+        self.av1_button = QRadioButton("AV1")
+        for button in (self.vp9_button, self.av1_button):
+            button.setAutoExclusive(True)
+            button.setMinimumHeight(30)
+            self.codec_toggle.addButton(button)
+            codec_switch.addWidget(button)
+        self.vp9_button.toggled.connect(lambda checked: self.set_codec("vp9") if checked else None)
+        self.av1_button.toggled.connect(lambda checked: self.set_codec("av1") if checked else None)
+        self.codec_stack = QStackedWidget()
         self.vp9_panel = CodecPanel("vp9", self.on_panel_change)
         self.av1_panel = CodecPanel("av1", self.on_panel_change)
-        self.codec_tabs.addTab(self.vp9_panel, "VP9")
-        self.codec_tabs.addTab(self.av1_panel, "AV1")
-        self.codec_tabs.currentChanged.connect(lambda *_: self.on_panel_change())
-        columns.addWidget(self.codec_tabs, 1)
+        self.codec_stack.addWidget(self.vp9_panel)
+        self.codec_stack.addWidget(self.av1_panel)
+        self.vp9_button.setChecked(True)
+        codec_column = QVBoxLayout()
+        codec_column.addLayout(codec_switch)
+        codec_column.addWidget(self.codec_stack)
+        columns.addLayout(codec_column, 1)
         layout.addWidget(self.inputs, 1)
         output_row = QHBoxLayout()
         self.destination = QLineEdit()
@@ -367,7 +382,15 @@ class ExportWindow(QMainWindow):
         self.update_output_name()
 
     def active_panel(self):
-        return self.codec_tabs.currentWidget()
+        return self.codec_stack.currentWidget()
+
+    def set_codec(self, codec):
+        if codec == "av1":
+            self.codec_stack.setCurrentWidget(self.av1_panel)
+        else:
+            self.codec_stack.setCurrentWidget(self.vp9_panel)
+        if hasattr(self, "output_name"):
+            self.on_panel_change()
 
     def on_panel_change(self):
         self.update_summary()
@@ -571,7 +594,8 @@ class ExportWindow(QMainWindow):
                 settings = defaults[panel.codec]
             panel.apply(settings)
         active = self.preferences.value("codec", "vp9")
-        self.codec_tabs.setCurrentIndex(1 if active == "av1" else 0)
+        self.av1_button.setChecked(active == "av1")
+        self.vp9_button.setChecked(active != "av1")
 
     def reset_settings(self):
         panel = self.active_panel()
@@ -620,7 +644,7 @@ class ExportWindow(QMainWindow):
         self.worker.start()
 
     def set_busy(self, busy):
-        for control in (self.inputs, self.codec_tabs, self.destination, self.browse, self.reset, self.export):
+        for control in (self.inputs, self.vp9_button, self.av1_button, self.destination, self.browse, self.reset, self.export):
             control.setEnabled(not busy)
         self.cancel.setEnabled(busy)
         self.log_button.setEnabled(not busy)

@@ -46,6 +46,15 @@ def test_target_controls_and_reset(window):
     assert not panel.target.isVisible()
 
 
+def test_codec_toggle(window):
+    assert window.active_panel().codec == "vp9"
+    window.av1_button.click()
+    assert window.active_panel().codec == "av1"
+    assert window.settings().codec == "av1"
+    window.vp9_button.click()
+    assert window.active_panel().codec == "vp9"
+
+
 def test_crf_help_matches_mode(window, monkeypatch):
     panel = window.active_panel()
     messages = []
