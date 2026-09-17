@@ -283,6 +283,7 @@ class ExportWindow(QMainWindow):
                                             self.show_input_help)
         select_row.addWidget(self.input_help)
         source.addLayout(select_row)
+        source.setSpacing(5)
         self.preview = QLabel("No frames selected")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(180, 130)
