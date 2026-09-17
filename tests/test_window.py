@@ -3,7 +3,7 @@ import shutil
 
 from PIL import Image
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 import pytest
 
 from png_webm_exporter.window import ExportWindow
@@ -82,6 +82,25 @@ def test_readme_viewer(window):
     assert dialog.isVisible()
 
 
+def test_log_viewer_exports_txt(window, monkeypatch, tmp_path):
+    window.show_log()
+    assert window.log_dialog.width() >= 900
+    assert window.log_view.toPlainText() == "No export yet."
+    destination = tmp_path / "export-log.txt"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(destination), "Text files (*.txt)"))
+    window.export_log()
+    assert destination.read_text(encoding="utf-8") == "No export yet."
+
+
+def test_cancel_closes_export_dialog(window, qtbot):
+    window.create_export_dialog()
+    window.export_dialog.show()
+    assert window.export_dialog.isVisible()
+    window.on_canceled()
+    qtbot.wait(10)
+    assert not window.export_dialog.isVisible()
+
+
 def test_frozen_readme_path(tmp_path, monkeypatch):
     source = tmp_path / "application-source"
     source.mkdir()
@@ -96,14 +115,12 @@ def test_compact_layout(window, qtbot):
     qtbot.wait(20)
     assert window.preview.geometry().bottom() < window.scrubber.geometry().top()
     assert window.color_confirm.geometry().bottom() < window.inputs.height()
-    window.active_panel().tabs.setCurrentIndex(1)
-    qtbot.wait(20)
     assert window.active_panel().gop.width() >= 100
     assert window.active_panel().gop.specialValueText() == "Auto"
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
-def test_gui_export(window, qtbot, tmp_path):
+def test_gui_export(window, qtbot, tmp_path, monkeypatch):
     frames = [tmp_path / f"frame_{index:04d}.png" for index in range(3)]
     for path in frames:
         Image.new("RGB", (64, 64), (40, 120, 180)).save(path)
@@ -123,5 +140,9 @@ def test_gui_export(window, qtbot, tmp_path):
     qtbot.waitUntil(lambda: window.export.isEnabled(), timeout=30_000)
     assert window.last_output == destination
     assert destination.stat().st_size <= 20_000
-    assert window.progress.value() == 100
-    assert window.open_button.isEnabled()
+    assert window.export_progress.value() == 100
+    assert window.export_open.isVisible()
+    assert window.export_done.isVisible()
+    window.export_done.click()
+    assert not window.export_dialog.isVisible()
+    window.export_dialog.close()

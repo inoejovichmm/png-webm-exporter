@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QStackedWidget, QTabWidget,
+    QGroupBox, QPushButton, QRadioButton, QSizePolicy, QSlider, QSpinBox, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -52,13 +52,14 @@ class CodecPanel(QWidget):
         super().__init__(parent)
         self.codec = codec
         self.on_change = on_change
-        tabs = QTabWidget(self)
-        self.tabs = tabs
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(tabs)
-        delivery = QWidget()
-        form = QFormLayout(delivery)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        standard = QGroupBox("Standard")
+        content_layout.addWidget(standard)
+        form = QFormLayout(standard)
         self.delivery_form = form
         form.setVerticalSpacing(16)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -95,44 +96,39 @@ class CodecPanel(QWidget):
         add_field(form, "Export first and last frames (WebP)", self.export_frames, "After the WebM is verified, also save the first and last frames next to it as <name>_first.webp and <name>_last.webp. Frames are extracted from the finished video and encoded with libwebp.")
         self.frame_quality = make_spin(0, 100, 90)
         self.frame_quality_label = add_field(form, "Frame WebP quality", self.frame_quality, "libwebp quality passed as -q:v, from 0 (smallest) to 100. Setting 100 switches libwebp into lossless mode instead of using the quality scale.")
-        tabs.addTab(delivery, "Delivery")
-        advanced = QWidget()
-        advanced_form = QFormLayout(advanced)
-        advanced_form.setVerticalSpacing(12)
-        advanced_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        advanced_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        standard_form = form
         if codec == "vp9":
             self.bitrate = make_spin(0, 1_000_000, 0)
             self.bitrate.setSuffix(" kb/s")
-            add_field(advanced_form, "Bitrate", self.bitrate, "Zero selects constant-quality encoding. A nonzero bitrate constrains quality using libvpx rate control; it is not an exact size cap. Target size always uses zero.")
+            add_field(standard_form, "Bitrate", self.bitrate, "Zero selects constant-quality encoding. A nonzero bitrate constrains quality using libvpx rate control; it is not an exact size cap. Target size always uses zero.")
             self.alt_ref = QCheckBox()
-            add_field(advanced_form, "Alternate reference frames", self.alt_ref, "Allows hidden alternate reference frames. This can improve compression but temporal filtering can change fine grain. Default off.")
+            add_field(standard_form, "Alternate reference frames", self.alt_ref, "Allows hidden alternate reference frames. This can improve compression but temporal filtering can change fine grain. Default off.")
             self.arnr = make_spin(0, 15, 0)
-            add_field(advanced_form, "Temporal filter frames", self.arnr, "Alternate-reference temporal filtering window, 0-15 frames. Zero disables filtering. Relevant when alternate reference frames are enabled.")
+            add_field(standard_form, "Temporal filter frames", self.arnr, "Alternate-reference temporal filtering window, 0-15 frames. Zero disables filtering. Relevant when alternate reference frames are enabled.")
             self.aq = QComboBox()
             self.aq.addItems(["0 - Off", "1 - Variance", "2 - Complexity", "3 - Cyclic refresh", "4 - Equator360"])
-            add_field(advanced_form, "Adaptive quantization", self.aq, "Redistributes quantization across the image. Off preserves the baseline behavior; other modes can change gradients and grain. Equator360 is for 360-degree video.")
+            add_field(standard_form, "Adaptive quantization", self.aq, "Redistributes quantization across the image. Off preserves the baseline behavior; other modes can change gradients and grain. Equator360 is for 360-degree video.")
             self.row_mt = QCheckBox()
             self.row_mt.setChecked(True)
-            add_field(advanced_form, "Row multithreading", self.row_mt, "Parallel row encoding, where supported by libvpx. Default on.")
+            add_field(standard_form, "Row multithreading", self.row_mt, "Parallel row encoding, where supported by libvpx. Default on.")
             self.tiles = make_spin(0, 6, 2)
-            add_field(advanced_form, "Tile columns (log2)", self.tiles, "Requested power-of-two tile columns: 0 = 1, 1 = 2, 2 = 4. libvpx limits this according to frame width. More tiles can trade compression efficiency for parallelism.")
+            add_field(standard_form, "Tile columns (log2)", self.tiles, "Requested power-of-two tile columns: 0 = 1, 1 = 2, 2 = 4. libvpx limits this according to frame width. More tiles can trade compression efficiency for parallelism.")
         else:
             self.preset = make_spin(0, 13, 8)
-            add_field(advanced_form, "Encoder preset", self.preset, "SVT-AV1 speed/quality preset, 0 (slowest, best compression) to 13 (fastest). Lower is slower but smaller for the same quality. 8 is a balanced default.")
+            add_field(standard_form, "Encoder preset", self.preset, "SVT-AV1 speed/quality preset, 0 (slowest, best compression) to 13 (fastest). Lower is slower but smaller for the same quality. 8 is a balanced default.")
             self.fgs_denoise = QCheckBox()
-            add_field(advanced_form, "Film grain denoise source", self.fgs_denoise, "Denoise the source before analyzing grain for synthesis. Leave off for already-clean renders; turn on only when the source itself carries grain you want removed and re-synthesized.")
+            add_field(standard_form, "Film grain denoise source", self.fgs_denoise, "Denoise the source before analyzing grain for synthesis. Leave off for already-clean renders; turn on only when the source itself carries grain you want removed and re-synthesized.")
+        outer.addWidget(content)
+        common = QGroupBox("Common")
+        common_form = QFormLayout(common)
+        common_form.setVerticalSpacing(12)
         self.threads = make_spin(0, 256, 8)
         self.threads.setSpecialValueText("Auto")
-        add_field(advanced_form, "Threads", self.threads, "Maximum encoder threads. Zero lets the encoder choose. More threads do not guarantee faster encoding.")
+        add_field(common_form, "Threads", self.threads, "Maximum encoder threads. Zero lets the encoder choose. More threads do not guarantee faster encoding.")
         self.gop = make_spin(0, 1_000_000, 0)
         self.gop.setSpecialValueText("Auto")
-        add_field(advanced_form, "Max keyframe distance", self.gop, "Maximum frames between keyframes. Zero leaves the encoder default. Shorter distances improve seeking but can increase file size.")
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setWidget(advanced)
-        tabs.addTab(scroll, "Advanced")
+        add_field(common_form, "Max keyframe distance", self.gop, "Maximum frames between keyframes. Zero leaves the encoder default. Shorter distances improve seeking but can increase file size.")
+        outer.addWidget(common)
         self.mode.currentIndexChanged.connect(self.update_mode)
         self.mode.currentIndexChanged.connect(lambda *_: self.on_change())
         self.fps.currentTextChanged.connect(lambda *_: self.on_change())
@@ -252,16 +248,9 @@ class ExportWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
-        heading = QLabel("PNG to WebM")
-        heading.setStyleSheet("font-size: 24px; font-weight: 600;")
-        header = QHBoxLayout()
-        header.addWidget(heading)
-        header.addStretch()
         self.readme_button = QPushButton("README")
         self.readme_button.setToolTip("Read the application README")
         self.readme_button.clicked.connect(self.show_readme)
-        header.addWidget(self.readme_button)
-        layout.addLayout(header)
         self.inputs = QWidget()
         columns = QHBoxLayout(self.inputs)
         columns.setContentsMargins(0, 0, 0, 0)
@@ -346,32 +335,15 @@ class ExportWindow(QMainWindow):
         self.output_name.setWordWrap(True)
         self.output_name.setStyleSheet("color: #9aa6a2;")
         layout.addWidget(self.output_name)
-        self.phase = QLabel("Ready")
-        self.phase.setWordWrap(True)
-        layout.addWidget(self.phase)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        layout.addWidget(self.progress)
-        self.details = QLabel("")
-        self.details.setWordWrap(True)
-        layout.addWidget(self.details)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.readme_button)
         self.reset = QPushButton("Reset settings")
         self.reset.clicked.connect(self.reset_settings)
         buttons.addWidget(self.reset)
         self.log_button = QPushButton("Log")
         self.log_button.clicked.connect(self.show_log)
         buttons.addWidget(self.log_button)
-        self.open_button = QPushButton("Open output folder")
-        self.open_button.setEnabled(False)
-        self.open_button.clicked.connect(self.open_output)
-        buttons.addWidget(self.open_button)
         buttons.addStretch()
-        self.cancel = QPushButton("Cancel")
-        self.cancel.setEnabled(False)
-        self.cancel.clicked.connect(self.cancel_export)
-        buttons.addWidget(self.cancel)
         self.export = QPushButton("Export WebM")
         self.export.setDefault(True)
         self.export.clicked.connect(self.start_export)
@@ -389,12 +361,10 @@ class ExportWindow(QMainWindow):
             self.codec_stack.setCurrentWidget(self.av1_panel)
         else:
             self.codec_stack.setCurrentWidget(self.vp9_panel)
-        if hasattr(self, "output_name"):
-            self.on_panel_change()
+        self.on_panel_change()
 
     def on_panel_change(self):
         self.update_summary()
-        self.update_output_name()
 
     def help_button(self, description, handler):
         button = QPushButton("How to export")
@@ -560,8 +530,7 @@ class ExportWindow(QMainWindow):
             self.destination.setText(directory)
             self.update_output_name()
 
-    def output_paths(self):
-        folder = Path(self.destination.text().strip()).expanduser().absolute()
+    def output_paths(self, folder):
         webm = folder / f"{self.sequence.stem}.webm"
         frames = [webm.with_name(f"{webm.stem}_{position}.webp") for position in ("first", "last")]
         return folder, webm, frames
@@ -570,7 +539,8 @@ class ExportWindow(QMainWindow):
         if self.sequence is None or not self.destination.text().strip():
             self.output_name.setText("")
             return
-        _, webm, frames = self.output_paths()
+        folder = Path(self.destination.text().strip()).expanduser().absolute()
+        _, webm, frames = self.output_paths(folder)
         text = f"Output file: {webm.name}"
         if self.active_panel().export_frames.isChecked():
             text += " | WebP frames: " + ", ".join(frame.name for frame in frames)
@@ -602,6 +572,39 @@ class ExportWindow(QMainWindow):
         panel.apply(Settings() if panel.codec == "vp9" else Settings(codec="av1", crf=30))
         self.preferences.remove(f"encoding_{panel.codec}")
 
+    def create_export_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export WebM")
+        dialog.setModal(True)
+        dialog.setMinimumSize(620, 260)
+        dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        layout = QVBoxLayout(dialog)
+        self.export_phase = QLabel("Starting export")
+        self.export_phase.setWordWrap(True)
+        layout.addWidget(self.export_phase)
+        self.export_progress = QProgressBar()
+        self.export_progress.setRange(0, 100)
+        self.export_progress.setValue(0)
+        layout.addWidget(self.export_progress)
+        self.export_details = QLabel("")
+        self.export_details.setWordWrap(True)
+        layout.addWidget(self.export_details)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        self.export_open = QPushButton("Open output folder")
+        self.export_open.setVisible(False)
+        self.export_open.clicked.connect(self.open_output)
+        buttons.addWidget(self.export_open)
+        self.export_done = QPushButton("Done")
+        self.export_done.setVisible(False)
+        self.export_done.clicked.connect(dialog.close)
+        buttons.addWidget(self.export_done)
+        self.export_cancel = QPushButton("Cancel")
+        self.export_cancel.clicked.connect(self.cancel_export)
+        buttons.addWidget(self.export_cancel)
+        layout.addLayout(buttons)
+        self.export_dialog = dialog
+
     def start_export(self):
         if self.worker is not None and self.worker.isRunning():
             return
@@ -628,7 +631,7 @@ class ExportWindow(QMainWindow):
         self.preferences.setValue(f"encoding_{settings.codec}", json.dumps(asdict(settings)))
         self.preferences.setValue("codec", settings.codec)
         self.last_output = None
-        self.open_button.setEnabled(False)
+        self.create_export_dialog()
         if self.worker is not None:
             self.worker.deleteLater()
         self.worker = ExportWorker(self.sequence, settings, destination, signature, self)
@@ -639,58 +642,56 @@ class ExportWindow(QMainWindow):
         self.worker.ready.connect(self.confirm_changed_destination)
         self.worker.finished.connect(self.on_finished)
         self.set_busy(True)
-        self.phase.setText("Starting export")
-        self.details.setText("")
+        self.export_dialog.show()
         self.worker.start()
 
     def set_busy(self, busy):
-        for control in (self.inputs, self.vp9_button, self.av1_button, self.destination, self.browse, self.reset, self.export):
+        for control in (self.inputs, self.vp9_button, self.av1_button, self.destination, self.browse,
+                self.reset, self.log_button, self.readme_button, self.export):
             control.setEnabled(not busy)
-        self.cancel.setEnabled(busy)
-        self.log_button.setEnabled(not busy)
+        if hasattr(self, "export_cancel"):
+            self.export_cancel.setEnabled(busy)
 
     def on_progress(self, event):
-        self.phase.setText(event["phase"])
+        self.export_phase.setText(event["phase"])
         percent = event.get("percent", 0)
-        self.progress.setRange(0, 0 if percent < 0 else 100)
+        self.export_progress.setRange(0, 0 if percent < 0 else 100)
         if percent >= 0:
-            self.progress.setValue(percent)
+            self.export_progress.setValue(percent)
         if "elapsed" in event:
             detail = f"{event['elapsed']:.0f} s elapsed | Current trial: {event['size'] / 1_000_000:.3f} MB"
             if event.get("best_size") is not None:
                 detail += f" | Best fitting: {event['best_size'] / 1_000_000:.3f} MB"
-            self.details.setText(detail)
+            self.export_details.setText(detail)
 
     def on_success(self, result):
         self.last_output = Path(result["path"])
-        self.phase.setText("Export complete and verified" if result.get("target_met", True)
-                           else "Export complete; target exceeded")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(100)
-        self.details.setText(f"{result['size'] / 1_000_000:.3f} MB ({result['size']:,} bytes) | "
-                             f"CRF {result['crf']} | {result['trials']} trial(s) | {result['frames']} frames")
+        self.export_phase.setText("Export complete and verified" if result.get("target_met", True)
+                                  else "Export complete; target exceeded")
+        self.export_progress.setRange(0, 100)
+        self.export_progress.setValue(100)
+        self.export_details.setText(f"{result['size'] / 1_000_000:.3f} MB ({result['size']:,} bytes) | "
+                                    f"CRF {result['crf']} | {result['trials']} trial(s) | {result['frames']} frames")
         frame_files = result.get("frame_files")
         if frame_files:
             names = ", ".join(Path(path).name for path in frame_files)
-            self.phase.setText("Export complete and verified; frames saved")
-            self.details.setText(self.details.text() + f" | WebP frames: {names}")
-        self.open_button.setEnabled(True)
+            self.export_phase.setText("Export complete and verified; frames saved")
+            self.export_details.setText(self.export_details.text() + f" | WebP frames: {names}")
+        self.export_open.setVisible(True)
+        self.export_done.setVisible(True)
 
     def on_failure(self, message):
-        self.phase.setText("Export failed; destination unchanged")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.details.setText(message.splitlines()[0])
-        if not self.closing:
-            dialog = QMessageBox(QMessageBox.Icon.Warning, "Export failed", message.splitlines()[0], parent=self)
-            dialog.setDetailedText(message + "\n\n" + "\n".join(self.worker.log))
-            dialog.exec()
+        self.export_phase.setText("Export failed; destination unchanged")
+        self.export_progress.setRange(0, 100)
+        self.export_progress.setValue(0)
+        self.export_details.setText(message.splitlines()[0])
 
     def on_canceled(self):
-        self.phase.setText("Canceled; destination unchanged")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.details.setText("")
+        self.export_phase.setText("Canceled; destination unchanged")
+        self.export_progress.setRange(0, 100)
+        self.export_progress.setValue(0)
+        self.export_details.setText("")
+        self.export_dialog.close()
 
     def on_finished(self):
         self.set_busy(False)
@@ -709,15 +710,39 @@ class ExportWindow(QMainWindow):
     def cancel_export(self):
         if self.worker is not None:
             self.worker.cancel()
-            self.cancel.setEnabled(False)
-            self.phase.setText("Canceling...")
+            self.export_cancel.setEnabled(False)
+            self.export_phase.setText("Canceling...")
 
     def show_log(self):
-        dialog = QMessageBox(self)
-        dialog.setWindowTitle("Export log")
-        dialog.setText("FFmpeg / ffprobe")
-        dialog.setDetailedText("\n".join(self.worker.log) if self.worker else "No export yet.")
-        dialog.exec()
+        if not hasattr(self, "log_dialog"):
+            self.log_dialog = QDialog(self)
+            self.log_dialog.setWindowTitle("Export log")
+            self.log_dialog.resize(1000, 700)
+            layout = QVBoxLayout(self.log_dialog)
+            self.log_view = QPlainTextEdit()
+            self.log_view.setReadOnly(True)
+            self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+            self.log_view.setAccessibleName("Export log contents")
+            layout.addWidget(self.log_view)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            self.log_export = QPushButton("Export TXT")
+            self.log_export.clicked.connect(self.export_log)
+            buttons.addButton(self.log_export, QDialogButtonBox.ButtonRole.ActionRole)
+            buttons.rejected.connect(self.log_dialog.close)
+            layout.addWidget(buttons)
+        self.log_view.setPlainText("\n".join(self.worker.log) if self.worker else "No export yet.")
+        self.log_dialog.show()
+        self.log_dialog.raise_()
+        self.log_dialog.activateWindow()
+
+    def export_log(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export log as TXT", "export-log.txt", "Text files (*.txt)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(self.log_view.toPlainText(), encoding="utf-8")
+        except OSError as error:
+            QMessageBox.warning(self, "Export log failed", f"Could not write the log file.\n{error}")
 
     def open_output(self):
         if self.last_output is not None:
