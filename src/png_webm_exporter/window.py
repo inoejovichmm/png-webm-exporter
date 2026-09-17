@@ -116,6 +116,10 @@ class CodecPanel(QWidget):
         else:
             self.preset = make_spin(0, 13, 8)
             add_field(standard_form, "Encoder preset", self.preset, "SVT-AV1 speed/quality preset, 0 (slowest, best compression) to 13 (fastest). Lower is slower but smaller for the same quality. 8 is a balanced default.")
+            self.tune = QComboBox()
+            self.tune.addItems(["0 - Visual quality (VQ)", "1 - PSNR", "2 - SSIM"])
+            self.tune.setCurrentIndex(1)
+            add_field(standard_form, "Visual tuning", self.tune, "SVT-AV1 tuning objective. VQ (0) prioritizes perceptual quality and texture; PSNR (1) preserves the current objective-metric behavior; SSIM (2) can suit smooth gradients and structural detail.")
             self.fgs_denoise = QCheckBox()
             add_field(standard_form, "Film grain denoise source", self.fgs_denoise, "Denoise the source before analyzing grain for synthesis. Leave off for already-clean renders; turn on only when the source itself carries grain you want removed and re-synthesized.")
         outer.addWidget(content)
@@ -200,6 +204,7 @@ class CodecPanel(QWidget):
                             aq_mode=self.aq.currentIndex(), row_mt=self.row_mt.isChecked(),
                             tile_columns=self.tiles.value())
         return Settings(**common, preset=self.preset.value(),
+                        tune=self.tune.currentIndex(),
                         fgs_enabled=self.fgs_enabled.isChecked(), fgs_level=self.fgs_level.value(),
                         fgs_denoise=self.fgs_denoise.isChecked())
 
@@ -222,6 +227,7 @@ class CodecPanel(QWidget):
             self.tiles.setValue(settings.tile_columns)
         else:
             self.preset.setValue(settings.preset)
+            self.tune.setCurrentIndex(settings.tune)
             self.fgs_enabled.setChecked(settings.fgs_enabled)
             self.fgs_level.setValue(settings.fgs_level)
             self.fgs_denoise.setChecked(settings.fgs_denoise)
@@ -241,8 +247,7 @@ class ExportWindow(QMainWindow):
         self.readme_dialog = None
         self.source_pixmap = QPixmap()
         self.setWindowTitle("PNG to WebM")
-        self.resize(960, 760)
-        self.setMinimumSize(720, 640)
+        self.setFixedSize(960, 850)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)

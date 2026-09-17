@@ -81,7 +81,21 @@ def test_av1_build_args(frames, tmp_path):
     params = args[args.index("-svtav1-params") + 1]
     assert "film-grain=8" in params
     assert "film-grain-denoise=0" in params
+    assert "tune=1" in params
     assert "color-range=1" in params
+
+
+def test_av1_vq_tuning(frames, tmp_path):
+    settings = Settings(codec="av1", tune=0)
+    args = build_args(detect_sequence(frames[:3]), settings, tmp_path / "out.webm", 30)
+    assert "tune=0" in args[args.index("-svtav1-params") + 1]
+
+
+def test_av1_ssim_tuning(frames, tmp_path):
+    settings = Settings(codec="av1", tune=2)
+    settings.validate()
+    args = build_args(detect_sequence(frames[:3]), settings, tmp_path / "out.webm", 30)
+    assert "tune=2" in args[args.index("-svtav1-params") + 1]
 
 
 def test_av1_fgs_toggle_omits_grain(frames, tmp_path):

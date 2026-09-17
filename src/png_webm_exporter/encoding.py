@@ -34,6 +34,7 @@ class Settings:
     threads: int = 8
     gop: int = 0
     preset: int = 8
+    tune: int = 1
     fgs_enabled: bool = True
     fgs_level: int = 8
     fgs_denoise: bool = False
@@ -58,6 +59,7 @@ class Settings:
             ("Tile exponent", self.tile_columns, 0, 6), ("Threads", self.threads, 0, 256),
             ("Keyframe distance", self.gop, 0, 1_000_000),
             ("Encoder preset", self.preset, 0, 13),
+            ("AV1 visual tuning", self.tune, 0, 2),
             ("Film grain level", self.fgs_level, 0, 50),
             ("Frame WebP quality", self.frame_quality, 0, 100),
         ):
@@ -92,7 +94,7 @@ def build_args(source: Sequence | MovieSource, settings: Settings, output: Path,
         args += ["-i", source.pattern, "-map", "0:v:0", "-frames:v", str(source.count), "-vf", scale]
     if settings.codec == "av1":
         svt = ["color-primaries=1", "transfer-characteristics=1", "matrix-coefficients=1",
-               f"color-range={1 if settings.full_range else 0}"]
+             f"color-range={1 if settings.full_range else 0}", f"tune={settings.tune}"]
         if settings.fgs_enabled and settings.fgs_level > 0:
             svt += [f"film-grain={settings.fgs_level}", f"film-grain-denoise={int(settings.fgs_denoise)}"]
         if settings.threads:

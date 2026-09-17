@@ -2,7 +2,7 @@ from pathlib import Path
 import shutil
 
 from PIL import Image
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSize, QSettings
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 import pytest
 
@@ -111,8 +111,9 @@ def test_frozen_readme_path(tmp_path, monkeypatch):
 
 
 def test_compact_layout(window, qtbot):
-    window.resize(720, 640)
     qtbot.wait(20)
+    assert window.size() == window.minimumSize() == window.maximumSize()
+    assert window.size() == QSize(960, 850)
     assert window.preview.geometry().bottom() < window.scrubber.geometry().top()
     assert window.color_confirm.geometry().bottom() < window.inputs.height()
     assert window.active_panel().gop.width() >= 100
