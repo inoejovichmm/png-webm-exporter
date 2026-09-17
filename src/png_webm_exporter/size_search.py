@@ -21,9 +21,10 @@ class SizeSearch:
     initial: int = 12
     results: dict[int, int] = field(default_factory=dict)
     max_trials: int = 9
+    minimum: int = 0
 
     def __post_init__(self) -> None:
-        if self.budget <= 0 or not 0 <= self.initial <= 63:
+        if self.budget <= 0 or not self.minimum <= self.initial <= 63 or not 0 <= self.minimum <= 63:
             raise ValueError("Invalid size search settings.")
 
     @property
@@ -42,7 +43,7 @@ class SizeSearch:
             return self.initial
         overs = [crf for crf, size in self.results.items() if size > self.budget]
         fits = [crf for crf, size in self.results.items() if size <= self.budget]
-        lower = max(overs) + 1 if overs else 0
+        lower = max(overs) + 1 if overs else self.minimum
         upper = min(fits) if fits else 63
         if lower > 63 or (fits and lower >= upper):
             return None
@@ -50,6 +51,6 @@ class SizeSearch:
         return candidate if candidate not in self.results else None
 
     def record(self, crf: int, size: int) -> None:
-        if not 0 <= crf <= 63 or size <= 0 or crf in self.results:
+        if not self.minimum <= crf <= 63 or size <= 0 or crf in self.results:
             raise ValueError("Invalid or repeated encoding trial.")
         self.results[crf] = size

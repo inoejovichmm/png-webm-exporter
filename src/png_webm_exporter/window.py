@@ -39,7 +39,7 @@ def add_field(form, text, control, explanation):
 
 CRF_INTRO = (
     "CRF means Constant Rate Factor: the encoder's quality setting, not a file-size setting. "
-    "It ranges from 0 to 63.\n\n"
+    "It ranges from 0 to 63 for VP9 and 1 to 63 for AV1.\n\n"
     "Lower CRF usually retains more detail and produces larger files. Higher CRF usually "
     "produces smaller files but can lose detail, smooth away grain/dither, or expose banding. "
     "It is not a percentage or a linear size scale.\n\n")
@@ -69,7 +69,7 @@ class CodecPanel(QWidget):
         self.mode = QComboBox()
         self.mode.addItems(["Manual CRF", "Target size"])
         add_field(form, "Quality mode", self.mode, "Target size tries up to nine complete encodes and keeps the lowest tested CRF that fits. It changes only CRF and forces bitrate to zero. It can take several times longer than a manual export.")
-        self.crf = make_spin(0, 63, 12 if codec == "vp9" else 30)
+        self.crf = make_spin(0 if codec == "vp9" else 1, 63, 12 if codec == "vp9" else 30)
         crf_row = QWidget()
         crf_layout = QHBoxLayout(crf_row)
         crf_layout.setContentsMargins(0, 0, 0, 0)
@@ -153,7 +153,8 @@ class CodecPanel(QWidget):
         explanation = CRF_INTRO
         if self.codec == "av1":
             explanation += (
-                "AV1 (SVT-AV1): CRF 0 is not lossless with this 8-bit 4:2:0 conversion. With film "
+                "AV1 (SVT-AV1): CRF 0 is unavailable because SVT-AV1 treats it as its default rate "
+                "factor rather than quality 0. With film "
                 "grain synthesis you can encode clean at a higher CRF for a smaller file and let the "
                 "decoder add grain back at playback. Start around 30 and tune per device.\n\n")
         else:

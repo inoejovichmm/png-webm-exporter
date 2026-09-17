@@ -94,12 +94,19 @@ def test_av1_fgs_toggle_omits_grain(frames, tmp_path):
 
 def test_av1_settings_validation():
     Settings(codec="av1", preset=13, fgs_level=50).validate()
+    with pytest.raises(ValueError, match="CRF"):
+        Settings(codec="av1", crf=0).validate()
     with pytest.raises(ValueError):
         Settings(codec="av1", preset=14).validate()
     with pytest.raises(ValueError):
         Settings(codec="av1", fgs_level=51).validate()
     with pytest.raises(ValueError):
         Settings(codec="h264").validate()
+
+
+def test_av1_crf_zero_is_rejected_in_command_building(frames, tmp_path):
+    with pytest.raises(ValueError, match="between 1 and 63"):
+        build_args(detect_sequence(frames[:3]), Settings(codec="av1"), tmp_path / "out.webm", 0)
 
 
 

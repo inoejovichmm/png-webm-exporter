@@ -43,6 +43,8 @@ class Settings:
     def validate(self) -> None:
         if self.codec not in ("vp9", "av1"):
             raise ValueError("Encoder must be either vp9 or av1.")
+        if self.codec == "av1" and self.crf < 1:
+            raise ValueError("AV1 CRF must be between 1 and 63; CRF 0 selects SVT-AV1's default.")
         try:
             fps = Fraction(self.fps)
         except (ValueError, ZeroDivisionError) as error:
@@ -67,8 +69,9 @@ class Settings:
 
 def build_args(source: Sequence | MovieSource, settings: Settings, output: Path, crf: int) -> list[str]:
     settings.validate()
-    if not 0 <= crf <= 63:
-        raise ValueError("CRF must be between 0 and 63.")
+    if not 0 <= crf <= 63 or (settings.codec == "av1" and crf == 0):
+        minimum = 1 if settings.codec == "av1" else 0
+        raise ValueError(f"{settings.codec.upper()} CRF must be between {minimum} and 63.")
     rate = Fraction(settings.fps)
     fps = str(rate)
     range_name = "full" if settings.full_range else "limited"
@@ -404,7 +407,9 @@ class ExportWorker(QThread):
             raise ValueError(f"This FFmpeg build does not include {required}.")
         if self.settings.export_frames and "libwebp" not in encoders:
             raise ValueError("This FFmpeg build does not include libwebp; frame export is unavailable.")
-        search = SizeSearch(self.settings.target_bytes, self.settings.crf) if self.settings.target_bytes else None
+        search = (SizeSearch(self.settings.target_bytes, self.settings.crf,
+                     minimum=1 if self.settings.codec == "av1" else 0)
+              if self.settings.target_bytes else None)
         best_path = None
         chosen_crf = self.settings.crf
         trial = 0
