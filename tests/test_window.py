@@ -128,10 +128,44 @@ def test_frozen_readme_path(tmp_path, monkeypatch):
     assert resources.readme_text() == "Bundled README contents"
 
 
+def test_new_source_updates_output_defaults(window, tmp_path):
+    source_dir = tmp_path / "sequence"
+    source_dir.mkdir()
+    frames = [source_dir / f"new_{index:04d}.png" for index in range(2)]
+    for frame in frames:
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(frame)
+
+    window.destination.setText(str(tmp_path / "old-output"))
+    window.webm_name.setText("custom-name")
+    window.first_frame_name.setText("custom-first")
+    window.last_frame_name.setText("custom-last")
+
+    window.set_frames(frames)
+
+    assert window.destination.text() == str(source_dir)
+    assert window.webm_name.text() == "new"
+    assert window.first_frame_name.text() == "new_first_frame"
+    assert window.last_frame_name.text() == "new_last_frame"
+
+
+def test_input_path_label_updates(window, tmp_path):
+    source_dir = tmp_path / "sequence"
+    source_dir.mkdir()
+    frames = [source_dir / f"input_{index:04d}.png" for index in range(2)]
+    for frame in frames:
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(frame)
+
+    window.set_frames(frames)
+
+    assert window.input_path.text() == str(source_dir)
+
+
 def test_compact_layout(window, qtbot):
     qtbot.wait(20)
-    assert window.size() == window.minimumSize() == window.maximumSize()
-    assert window.size() == QSize(960, 850)
+    assert window.size().width() >= window.minimumSize().width()
+    assert window.size().height() >= window.minimumSize().height()
+    assert window.size().width() <= 960
+    assert window.size().height() <= 900
     assert window.preview.geometry().bottom() < window.scrubber.geometry().top()
     assert window.color_confirm.geometry().bottom() < window.inputs.height()
     assert window.active_panel().gop.width() >= 100

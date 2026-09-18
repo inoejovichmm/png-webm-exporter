@@ -277,6 +277,11 @@ class ExportWindow(QMainWindow):
                                             self.show_input_help)
         select_row.addWidget(self.input_help)
         source.addLayout(select_row)
+        self.input_path = QLabel("No input selected")
+        self.input_path.setWordWrap(True)
+        self.input_path.setStyleSheet("color: #b9c4c1;")
+        self.input_path.setToolTip("Selected input folder or movie")
+        source.addWidget(self.input_path)
         source.setSpacing(5)
         self.preview = QLabel("No frames selected")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -468,8 +473,8 @@ class ExportWindow(QMainWindow):
         self.scrubber.setValue(0)
         self.show_frame(0)
         self.update_summary()
-        if not self.destination.text():
-            self.destination.setText(str(sequence.files[0].parent))
+        self.input_path.setText(str(sequence.files[0].parent))
+        self.destination.setText(str(sequence.files[0].parent))
         self.set_default_output_names(sequence.stem)
         self.update_output_summary()
 
@@ -486,8 +491,8 @@ class ExportWindow(QMainWindow):
         self.scrubber.setEnabled(False)
         self.load_movie_poster(source)
         self.update_summary()
-        if not self.destination.text():
-            self.destination.setText(str(source.path.parent))
+        self.input_path.setText(str(source.path))
+        self.destination.setText(str(source.path.parent))
         self.set_default_output_names(source.stem)
         self.update_output_summary()
 
