@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 
@@ -20,7 +21,6 @@ class SizeSearch:
     budget: int
     initial: int = 12
     results: dict[int, int] = field(default_factory=dict)
-    max_trials: int = 9
     minimum: int = 0
 
     def __post_init__(self) -> None:
@@ -37,8 +37,6 @@ class SizeSearch:
         return self.best if self.best is not None else min(self.results, key=self.results.get, default=None)
 
     def next_crf(self) -> int | None:
-        if len(self.results) >= self.max_trials:
-            return None
         if not self.results:
             return self.initial
         overs = [crf for crf, size in self.results.items() if size > self.budget]
@@ -47,6 +45,14 @@ class SizeSearch:
         upper = min(fits) if fits else 63
         if lower > 63 or (fits and lower >= upper):
             return None
+        if not fits:
+            # Not bracketed yet: step up from the closest over-budget trial instead of
+            # bisecting blindly to the far end of the range, so a near-miss takes a small
+            # nudge rather than a huge jump (e.g. CRF 3 barely over target doesn't leap to 33).
+            closest_crf = max(overs)
+            ratio = self.results[closest_crf] / self.budget
+            step = max(1, round(6 * math.log2(ratio)))
+            return min(closest_crf + step, upper)
         candidate = (lower + upper) // 2
         return candidate if candidate not in self.results else None
 

@@ -55,6 +55,14 @@ def test_codec_toggle(window):
     assert window.active_panel().codec == "vp9"
 
 
+def test_webp_frame_controls_are_common(window):
+    panel = window.active_panel()
+    common_form = panel.export_frames.parentWidget().layout()
+    assert common_form.labelForField(panel.export_frames).text() == "Export first and last frames (WebP)"
+    assert common_form.labelForField(panel.frame_quality) is panel.frame_quality_label
+    assert panel.delivery_form.labelForField(panel.export_frames) is None
+
+
 def test_crf_help_matches_mode(window, monkeypatch):
     panel = window.active_panel()
     messages = []

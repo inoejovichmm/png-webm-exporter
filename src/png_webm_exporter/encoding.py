@@ -293,12 +293,13 @@ class ExportWorker(QThread):
     ready = Signal(str, dict)
 
     def __init__(self, source: Sequence | MovieSource, settings: Settings, destination: Path,
-                 signature, parent=None):
+                 signature, frame_paths: dict[str, Path] | None = None, parent=None):
         super().__init__(parent)
         self.source = source
         self.settings = settings
         self.destination = destination.absolute()
         self.signature = signature
+        self.frame_paths = frame_paths or {}
         self.stop = threading.Event()
         self.decision = threading.Event()
         self.approved = False
@@ -432,7 +433,7 @@ class ExportWorker(QThread):
             os.close(descriptor)
             candidate = Path(name)
             self.owned.add(candidate)
-            label = f"Trial {trial} of up to 9 - CRF {current_crf}" if search else f"Encoding - CRF {current_crf}"
+            label = f"Trial {trial} - CRF {current_crf}" if search else f"Encoding - CRF {current_crf}"
             self.update.emit({"phase": label, "percent": 0})
 
             def progress(line):
@@ -505,7 +506,7 @@ class ExportWorker(QThread):
             if self.stop.is_set():
                 raise Canceled
             self.update.emit({"phase": f"Exporting {position} frame as WebP ({mode})", "percent": -1})
-            target = self.destination.with_name(f"{self.destination.stem}_{position}.webp")
+            target = self.frame_paths.get(position, self.destination.with_name(f"{self.destination.stem}_{position}.webp")).absolute()
             args = build_frame_args(self.destination, target, quality, index)
             self.log.append(json.dumps([str(ffmpeg), *args]))
             self.execute(ffmpeg, args)

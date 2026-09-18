@@ -93,10 +93,6 @@ class CodecPanel(QWidget):
             add_field(form, "Film grain synthesis", self.fgs_enabled, "When on, the AV1 decoder regenerates fine grain at playback from bitstream metadata instead of the encoder storing it. This breaks up 8-bit banding on shallow gradients while keeping the encode clean and small. Requires a decoder that applies film grain; modern Pixel devices do.")
             self.fgs_level = make_spin(0, 50, 8)
             self.fgs_level_label = add_field(form, "Film grain level", self.fgs_level, "Strength of the synthesized grain, 0-50. Higher adds more visible grain. Start near 8 and tune on the least capable target panel, which is the worst case for banding. Zero disables synthesis even when the toggle is on.")
-        self.export_frames = QCheckBox()
-        add_field(form, "Export first and last frames (WebP)", self.export_frames, "After the WebM is verified, also save the first and last frames next to it as <name>_first.webp and <name>_last.webp. Frames are extracted from the finished video and encoded with libwebp.")
-        self.frame_quality = make_spin(0, 100, 90)
-        self.frame_quality_label = add_field(form, "Frame WebP quality", self.frame_quality, "libwebp quality passed as -q:v, from 0 (smallest) to 100. Setting 100 switches libwebp into lossless mode instead of using the quality scale.")
         standard_form = form
         if codec == "vp9":
             self.bitrate = make_spin(0, 1_000_000, 0)
@@ -133,6 +129,10 @@ class CodecPanel(QWidget):
         self.gop = make_spin(0, 1_000_000, 0)
         self.gop.setSpecialValueText("Auto")
         add_field(common_form, "Max keyframe distance", self.gop, "Maximum frames between keyframes. Zero leaves the encoder default. Shorter distances improve seeking but can increase file size.")
+        self.export_frames = QCheckBox()
+        add_field(common_form, "Export first and last frames (WebP)", self.export_frames, "After the WebM is verified, also save the first and last frames next to it as <name>_first_frame.webp and <name>_last_frame.webp. Frames are extracted from the finished video and encoded with libwebp.")
+        self.frame_quality = make_spin(0, 100, 90)
+        self.frame_quality_label = add_field(common_form, "Frame WebP quality", self.frame_quality, "libwebp quality passed as -q:v, from 0 (smallest) to 100. Setting 100 switches libwebp into lossless mode instead of using the quality scale.")
         outer.addWidget(common)
         self.mode.currentIndexChanged.connect(self.update_mode)
         self.mode.currentIndexChanged.connect(lambda *_: self.on_change())
@@ -248,7 +248,6 @@ class ExportWindow(QMainWindow):
         self.readme_dialog = None
         self.source_pixmap = QPixmap()
         self.setWindowTitle("PNG to WebM")
-        self.setFixedSize(960, 850)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
@@ -329,7 +328,7 @@ class ExportWindow(QMainWindow):
         output_row = QHBoxLayout()
         self.destination = QLineEdit()
         self.destination.setPlaceholderText("Output folder")
-        self.destination.setToolTip("Destination folder. The output file name is derived from the frame name pattern. Existing files are replaced only after successful verification and your confirmation.")
+        self.destination.setToolTip("Destination folder. Existing files are replaced only after successful verification and your confirmation.")
         self.browse = QPushButton("Browse\u2026")
         self.browse.setToolTip("Choose output folder")
         self.browse.setAccessibleName("Choose output folder")
@@ -337,10 +336,19 @@ class ExportWindow(QMainWindow):
         output_row.addWidget(self.destination, 1)
         output_row.addWidget(self.browse)
         layout.addLayout(output_row)
-        self.output_name = QLabel("")
-        self.output_name.setWordWrap(True)
-        self.output_name.setStyleSheet("color: #9aa6a2;")
-        layout.addWidget(self.output_name)
+        self.output_names_form = QFormLayout()
+        self.output_names_form.setVerticalSpacing(6)
+        self.output_names_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.webm_name = QLineEdit()
+        self.webm_name.setToolTip("Output file name, without extension; \".webm\" is added automatically. Initialized from the input's name.")
+        add_field(self.output_names_form, "Output file name", self.webm_name, self.webm_name.toolTip())
+        self.first_frame_name = QLineEdit()
+        self.first_frame_name.setToolTip("First-frame file name, without extension; \".webp\" is added automatically.")
+        add_field(self.output_names_form, "First frame file name", self.first_frame_name, self.first_frame_name.toolTip())
+        self.last_frame_name = QLineEdit()
+        self.last_frame_name.setToolTip("Last-frame file name, without extension; \".webp\" is added automatically.")
+        add_field(self.output_names_form, "Last frame file name", self.last_frame_name, self.last_frame_name.toolTip())
+        layout.addLayout(self.output_names_form)
         buttons = QHBoxLayout()
         buttons.addWidget(self.readme_button)
         self.reset = QPushButton("Reset settings")
@@ -355,9 +363,9 @@ class ExportWindow(QMainWindow):
         self.export.clicked.connect(self.start_export)
         buttons.addWidget(self.export)
         layout.addLayout(buttons)
-        self.destination.textChanged.connect(self.update_output_name)
+        self.destination.textChanged.connect(self.update_output_summary)
         self.restore_settings()
-        self.update_output_name()
+        self.update_output_summary()
 
     def active_panel(self):
         return self.codec_stack.currentWidget()
@@ -371,6 +379,7 @@ class ExportWindow(QMainWindow):
 
     def on_panel_change(self):
         self.update_summary()
+        self.update_output_summary()
 
     def help_button(self, description, handler):
         button = QPushButton("How to export")
@@ -461,7 +470,8 @@ class ExportWindow(QMainWindow):
         self.update_summary()
         if not self.destination.text():
             self.destination.setText(str(sequence.files[0].parent))
-        self.update_output_name()
+        self.set_default_output_names(sequence.stem)
+        self.update_output_summary()
 
     def set_movie(self, path):
         try:
@@ -478,7 +488,8 @@ class ExportWindow(QMainWindow):
         self.update_summary()
         if not self.destination.text():
             self.destination.setText(str(source.path.parent))
-        self.update_output_name()
+        self.set_default_output_names(source.stem)
+        self.update_output_summary()
 
     def load_movie_poster(self, source):
         self.source_pixmap = QPixmap()
@@ -534,23 +545,33 @@ class ExportWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "Select output folder", self.destination.text())
         if directory:
             self.destination.setText(directory)
-            self.update_output_name()
+            self.update_output_summary()
 
-    def output_paths(self, folder):
-        webm = folder / f"{self.sequence.stem}.webm"
-        frames = [webm.with_name(f"{webm.stem}_{position}.webp") for position in ("first", "last")]
+    def set_default_output_names(self, stem):
+        self.webm_name.setText(stem)
+        self.first_frame_name.setText(f"{stem}_first_frame")
+        self.last_frame_name.setText(f"{stem}_last_frame")
+
+    def output_paths(self, folder, include_frames=True):
+        def valid_name(text, label, suffix):
+            name = text.strip()
+            if not name or name in (".", "..") or Path(name).name != name:
+                raise ValueError(f"Enter a valid {label} (no folders or path separators).")
+            return f"{name}{suffix}"
+
+        webm = folder / valid_name(self.webm_name.text(), "output file name", ".webm")
+        frames = []
+        if include_frames:
+            frames = [folder / valid_name(self.first_frame_name.text(), "first frame file name", ".webp"),
+                      folder / valid_name(self.last_frame_name.text(), "last frame file name", ".webp")]
         return folder, webm, frames
 
-    def update_output_name(self):
-        if self.sequence is None or not self.destination.text().strip():
-            self.output_name.setText("")
+    def update_output_summary(self):
+        if not hasattr(self, "output_names_form"):
             return
-        folder = Path(self.destination.text().strip()).expanduser().absolute()
-        _, webm, frames = self.output_paths(folder)
-        text = f"Output file: {webm.name}"
-        if self.active_panel().export_frames.isChecked():
-            text += " | WebP frames: " + ", ".join(frame.name for frame in frames)
-        self.output_name.setText(text)
+        export_frames = self.sequence is not None and self.active_panel().export_frames.isChecked()
+        self.output_names_form.setRowVisible(self.first_frame_name, export_frames)
+        self.output_names_form.setRowVisible(self.last_frame_name, export_frames)
 
     def settings(self):
         return self.active_panel().settings()
@@ -624,7 +645,7 @@ class ExportWindow(QMainWindow):
             folder = Path(self.destination.text().strip()).expanduser().absolute()
             if not folder.is_dir():
                 raise ValueError("Choose an existing output folder.")
-            destination = folder / f"{self.sequence.stem}.webm"
+            _, destination, frames = self.output_paths(folder, include_frames=settings.export_frames)
             signature = file_signature(destination)
             if signature is not None and QMessageBox.question(
                     self, "Replace existing file?", f"Replace {destination.name} after a successful export?",
@@ -640,7 +661,8 @@ class ExportWindow(QMainWindow):
         self.create_export_dialog()
         if self.worker is not None:
             self.worker.deleteLater()
-        self.worker = ExportWorker(self.sequence, settings, destination, signature, self)
+        frame_paths = {"first": frames[0], "last": frames[1]} if settings.export_frames else None
+        self.worker = ExportWorker(self.sequence, settings, destination, signature, frame_paths, self)
         self.worker.update.connect(self.on_progress)
         self.worker.succeeded.connect(self.on_success)
         self.worker.failed.connect(self.on_failure)
@@ -653,6 +675,7 @@ class ExportWindow(QMainWindow):
 
     def set_busy(self, busy):
         for control in (self.inputs, self.vp9_button, self.av1_button, self.destination, self.browse,
+                self.webm_name, self.first_frame_name, self.last_frame_name,
                 self.reset, self.log_button, self.readme_button, self.export):
             control.setEnabled(not busy)
         if hasattr(self, "export_cancel"):

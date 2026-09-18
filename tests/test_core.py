@@ -44,12 +44,15 @@ class SequenceTests(unittest.TestCase):
 
 class SearchTests(unittest.TestCase):
     def test_all_integer_thresholds(self):
+        # Model size as roughly halving every 6 CRF steps (mirrors real encoder behaviour),
+        # exercising both the heuristic expansion phase and the bisection phase.
         for threshold in range(64):
             search = SizeSearch(100)
             while (crf := search.next_crf()) is not None:
-                search.record(crf, 101 if crf < threshold else 100)
+                size = round(100 * 2 ** ((threshold - crf) / 6))
+                search.record(crf, max(size, 1))
             self.assertEqual(search.best, threshold)
-            self.assertLessEqual(len(search.results), 9)
+            self.assertLessEqual(len(search.results), 20)
 
     def test_unreachable(self):
         search = SizeSearch(1)
