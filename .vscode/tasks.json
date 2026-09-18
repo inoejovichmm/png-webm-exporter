@@ -54,6 +54,13 @@
 			"command": "pwd; git rev-parse --show-toplevel; git status --short; git remote -v; command -v gh; gh auth status; GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10' git ls-remote git@github.com:inoejovichmm/png-webm-exporter.git",
 			"isBackground": false,
 			"problemMatcher": []
+		},
+		{
+			"label": "Package desktop app and open",
+			"type": "shell",
+			"command": ".venv/bin/python tools/package.py && open \"dist/PNG to WebM.app\"",
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

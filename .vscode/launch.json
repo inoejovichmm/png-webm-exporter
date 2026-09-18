@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Build and open app",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cd ${workspaceFolder} && .venv/bin/python tools/package.py && open \"dist/PNG to WebM.app\""
+    }
+  ]
+}
