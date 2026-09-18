@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from fractions import Fraction
 import json
 from pathlib import Path
@@ -248,6 +248,7 @@ class ExportWindow(QMainWindow):
         self.readme_dialog = None
         self.source_pixmap = QPixmap()
         self.setWindowTitle("PNG to WebM")
+        self.resize(900, 760)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
@@ -302,9 +303,11 @@ class ExportWindow(QMainWindow):
         self.summary = QLabel("No sequence")
         self.summary.setWordWrap(True)
         source.addWidget(self.summary)
-        self.color_confirm = QCheckBox("I confirm my PNGs are standard SDR (Rec.709) with transparency already flattened")
-        self.color_confirm.setToolTip("The exporter does not color-manage: it tags output as Rec.709 and does not convert ICC profiles, so P3/HDR sources will look wrong. Alpha is discarded, so any transparency must already be flattened onto a background. Output is 8-bit YUV 4:2:0 (VP9 Profile 0 or AV1 Main), no audio. VP9 adds no dither; AV1 can synthesize film grain at playback when film grain synthesis is enabled.")
-        source.addWidget(self.color_confirm)
+        self.color_reminder = QLabel("Source must be standard SDR (Rec.709/sRGB) with flattened transparency.")
+        self.color_reminder.setWordWrap(True)
+        self.color_reminder.setStyleSheet("color: #8b9895; font-size: 11px;")
+        self.color_reminder.setToolTip("The exporter tags output as Rec.709 and does not color-manage: ensure After Effects compositions use sRGB / Rec.709. Non-standard color profiles/tags (such as P3/HDR) and transparent pixels are automatically rejected.")
+        source.addWidget(self.color_reminder)
         source.addStretch()
         columns.addLayout(source, 1)
         self.codec_toggle = QButtonGroup(self)
@@ -383,6 +386,7 @@ class ExportWindow(QMainWindow):
         self.on_panel_change()
 
     def on_panel_change(self):
+        self.update_fps_state()
         self.update_summary()
         self.update_output_summary()
 
@@ -467,11 +471,11 @@ class ExportWindow(QMainWindow):
             QMessageBox.warning(self, "Cannot use selection", str(error))
             return
         self.sequence = sequence
-        self.color_confirm.setChecked(False)
         self.scrubber.setEnabled(True)
         self.scrubber.setRange(0, sequence.count - 1)
         self.scrubber.setValue(0)
         self.show_frame(0)
+        self.update_fps_state()
         self.update_summary()
         self.input_path.setText(str(sequence.files[0].parent))
         self.destination.setText(str(sequence.files[0].parent))
@@ -485,11 +489,11 @@ class ExportWindow(QMainWindow):
             QMessageBox.warning(self, "Cannot use movie", str(error))
             return
         self.sequence = source
-        self.color_confirm.setChecked(False)
         self.scrubber.setRange(0, 0)
         self.scrubber.setValue(0)
         self.scrubber.setEnabled(False)
         self.load_movie_poster(source)
+        self.update_fps_state()
         self.update_summary()
         self.input_path.setText(str(source.path))
         self.destination.setText(str(source.path.parent))
@@ -533,7 +537,8 @@ class ExportWindow(QMainWindow):
         if self.sequence is None:
             return
         try:
-            rate = Fraction(self.active_panel().fps.currentText())
+            fps_str = self.sequence.fps if isinstance(self.sequence, MovieSource) else self.active_panel().fps.currentText()
+            rate = Fraction(fps_str)
             duration = f"{float(self.sequence.count / rate):.3f} s" if rate > 0 else "Invalid FPS"
         except (ValueError, ZeroDivisionError):
             duration = "Invalid FPS"
@@ -545,6 +550,17 @@ class ExportWindow(QMainWindow):
             self.summary.setText(f"{self.sequence.count} frames | {duration}\n"
                                  f"{self.source_pixmap.width()} x {self.source_pixmap.height()} px\n"
                                  f"Sequence {self.sequence.start} to {self.sequence.end}")
+
+    def update_fps_state(self):
+        is_movie = isinstance(self.sequence, MovieSource)
+        for panel in (self.vp9_panel, self.av1_panel):
+            if is_movie:
+                panel.fps.setCurrentText(self.sequence.fps)
+                panel.fps.setEnabled(False)
+                panel.fps.setToolTip(f"Locked to movie frame rate ({self.sequence.fps} fps).")
+            else:
+                panel.fps.setEnabled(True)
+                panel.fps.setToolTip("Frames per second. Fractions such as 24000/1001 are accepted. Every selected frame is encoded once; duration is frame count divided by FPS.")
 
     def choose_output(self):
         directory = QFileDialog.getExistingDirectory(self, "Select output folder", self.destination.text())
@@ -598,11 +614,13 @@ class ExportWindow(QMainWindow):
         active = self.preferences.value("codec", "vp9")
         self.av1_button.setChecked(active == "av1")
         self.vp9_button.setChecked(active != "av1")
+        self.update_fps_state()
 
     def reset_settings(self):
         panel = self.active_panel()
         panel.apply(Settings() if panel.codec == "vp9" else Settings(codec="av1", crf=30))
         self.preferences.remove(f"encoding_{panel.codec}")
+        self.update_fps_state()
 
     def create_export_dialog(self):
         dialog = QDialog(self)
@@ -643,9 +661,9 @@ class ExportWindow(QMainWindow):
         try:
             if self.sequence is None:
                 raise ValueError("Select a folder of PNG frames or a ProRes 4444 movie first.")
-            if not self.color_confirm.isChecked():
-                raise ValueError("Confirm the source color space and flattened transparency before exporting.")
             settings = self.settings()
+            if isinstance(self.sequence, MovieSource):
+                settings = replace(settings, fps=self.sequence.fps)
             settings.validate()
             folder = Path(self.destination.text().strip()).expanduser().absolute()
             if not folder.is_dir():
@@ -685,6 +703,8 @@ class ExportWindow(QMainWindow):
             control.setEnabled(not busy)
         if hasattr(self, "export_cancel"):
             self.export_cancel.setEnabled(busy)
+        if not busy:
+            self.update_fps_state()
 
     def on_progress(self, event):
         self.export_phase.setText(event["phase"])

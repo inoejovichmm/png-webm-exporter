@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from fractions import Fraction
+import io
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import tempfile
 import threading
 import time
 
-from PIL import Image
+from PIL import Image, ImageCms
 from PySide6.QtCore import QThread, Signal
 
 from .resources import binary_path
@@ -74,7 +75,7 @@ def build_args(source: Sequence | MovieSource, settings: Settings, output: Path,
     if not 0 <= crf <= 63 or (settings.codec == "av1" and crf == 0):
         minimum = 1 if settings.codec == "av1" else 0
         raise ValueError(f"{settings.codec.upper()} CRF must be between {minimum} and 63.")
-    rate = Fraction(settings.fps)
+    rate = Fraction(source.fps if isinstance(source, MovieSource) else settings.fps)
     fps = str(rate)
     range_name = "full" if settings.full_range else "limited"
     scale = (f"scale=out_color_matrix=bt709:out_range={range_name},format=yuv420p,"
@@ -171,6 +172,18 @@ def inspect_frames(sequence: Sequence, canceled: threading.Event, progress) -> t
                 raise ValueError(f"Flatten transparency in AE and export RGB PNGs: {path.name}. 16-bit RGBA is not accepted.")
             if "transparency" in image.info:
                 raise ValueError(f"Remove PNG transparency before export: {path.name}")
+            icc_profile = image.info.get("icc_profile")
+            if icc_profile:
+                try:
+                    desc = ImageCms.getProfileDescription(io.BytesIO(icc_profile)).strip()
+                    desc_lower = desc.lower()
+                    if not any(token in desc_lower for token in ("srgb", "bt.709", "bt709", "rec.709", "rec709", "iec61966-2.1", "iec 61966-2.1")):
+                        raise ValueError(f"PNG carries a non-sRGB color profile ({desc!r}): {path.name}. "
+                                         f"Export in standard SDR sRGB / Rec.709.")
+                except Exception as error:
+                    if isinstance(error, ValueError):
+                        raise
+                    raise ValueError(f"Could not read color profile in {path.name}: {error}") from error
         progress(index + 1, sequence.count)
     if expected is None:
         raise ValueError("No frames selected.")
@@ -224,10 +237,37 @@ def inspect_movie(path: Path) -> MovieSource:
         raise ValueError("Could not determine the movie's frame dimensions.")
     if width % 2 or height % 2:
         raise ValueError(f"Use even frame dimensions for this delivery preset: {width} x {height}.")
+    primaries = str(video.get("color_primaries", "")).strip().lower()
+    if primaries and primaries not in ("bt709", "unknown", "unspecified"):
+        raise ValueError(f"The movie is tagged with non-standard color primaries {primaries!r}. "
+                         f"Export as standard SDR Rec.709.")
+    transfer = str(video.get("color_transfer", "")).strip().lower()
+    if transfer and transfer not in ("bt709", "iec61966-2-1", "iec61966-2-4", "unknown", "unspecified"):
+        raise ValueError(f"The movie is tagged with non-standard color transfer curve {transfer!r}. "
+                         f"Export as standard SDR Rec.709.")
+    colorspace = str(video.get("color_space", "")).strip().lower()
+    if colorspace and colorspace not in ("bt709", "gbr", "unknown", "unspecified"):
+        raise ValueError(f"The movie is tagged with non-standard color space {colorspace!r}. "
+                         f"Export as standard SDR Rec.709.")
     count = _movie_frame_count(path, video)
     if count < 1:
         raise ValueError("The movie contains no decodable frames.")
-    return MovieSource(path, count, width, height, MOVIE_PIXEL_DEPTHS[pixel_format], clean_stem(path.name))
+    fps = _movie_fps(video)
+    return MovieSource(path, count, width, height, MOVIE_PIXEL_DEPTHS[pixel_format], clean_stem(path.name), fps)
+
+
+def _movie_fps(video: dict) -> str:
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        raw = str(video.get(key, "")).strip()
+        if not raw or raw == "0/0":
+            continue
+        try:
+            fraction = Fraction(raw)
+            if 0 < fraction <= 240:
+                return str(fraction.numerator) if fraction.denominator == 1 else f"{fraction.numerator}/{fraction.denominator}"
+        except (ValueError, ZeroDivisionError):
+            continue
+    raise ValueError("Could not determine the movie's frame rate.")
 
 
 def _movie_frame_count(path: Path, video: dict) -> int:
@@ -257,7 +297,7 @@ def file_signature(path: Path) -> tuple[int, int, int, int] | None:
         return None
 
 
-def verify_probe(data: dict, sequence: Sequence, settings: Settings, dimensions: tuple[int, int, int]) -> None:
+def verify_probe(data: dict, sequence: Sequence | MovieSource, settings: Settings, dimensions: tuple[int, int, int]) -> None:
     streams = data.get("streams", [])
     if len(streams) != 1 or streams[0].get("codec_type") != "video":
         raise ValueError("Output must contain exactly one video stream and no audio.")
@@ -277,7 +317,7 @@ def verify_probe(data: dict, sequence: Sequence, settings: Settings, dimensions:
             raise ValueError(f"Output verification failed: {key} is {video.get(key)!r}, expected {value!r}.")
     if int(video.get("nb_read_frames", -1)) != sequence.count:
         raise ValueError("Output frame count does not match the selection.")
-    rate = Fraction(settings.fps)
+    rate = Fraction(sequence.fps if isinstance(sequence, MovieSource) else settings.fps)
     duration = float(data.get("format", {}).get("duration", -1))
     if abs(duration - float(sequence.count / rate)) > max(0.005, float(1 / rate) / 10):
         raise ValueError("Output duration does not match the selected frame rate.")
@@ -478,8 +518,9 @@ class ExportWorker(QThread):
         data = self.execute(ffprobe, ["-v", "error", "-count_frames", "-show_streams",
                                       "-show_format", "-of", "json", str(best_path)])
         verify_probe(json.loads(data), source, self.settings, dimensions)
+        rate = Fraction(source.fps if isinstance(source, MovieSource) else self.settings.fps)
         result = {"path": str(self.destination), "size": best_path.stat().st_size, "crf": chosen_crf,
-                  "trials": trial, "frames": source.count, "duration": float(source.count / Fraction(self.settings.fps))}
+                  "trials": trial, "frames": source.count, "duration": float(source.count / rate)}
         result["target_met"] = not search or result["size"] <= search.budget
         if file_signature(self.destination) != self.signature:
             self.update.emit({"phase": "Awaiting overwrite confirmation", "percent": -1})

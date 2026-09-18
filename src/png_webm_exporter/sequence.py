@@ -24,6 +24,7 @@ class MovieSource:
     height: int
     depth: int
     stem: str = "output"
+    fps: str = "25"
 
 
 def clean_stem(text: str) -> str:

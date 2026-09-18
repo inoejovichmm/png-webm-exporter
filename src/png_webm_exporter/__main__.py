@@ -21,31 +21,26 @@ def smoke_test(application, window, directory):
         image.save(path)
         paths.append(path)
     window.set_frames(paths)
-    window.color_confirm.setChecked(True)
     panel = window.active_panel()
     panel.mode.setCurrentIndex(1)
     panel.target.setText("0.05")
     window.destination.setText(str(directory))
-    window.on_failure = lambda message: window.details.setText(message)
 
     def finish():
-        report = {"success": window.last_output is not None, "phase": window.phase.text(),
-                  "details": window.details.text(), "frozen": bool(getattr(sys, "frozen", False))}
+        report = {"success": window.last_output is not None, "phase": window.export_phase.text(),
+                  "details": window.export_details.text(), "frozen": bool(getattr(sys, "frozen", False))}
         if window.last_output:
             report["bytes"] = window.last_output.stat().st_size
-        for name, width, height, tab in (("delivery", 960, 760, 0), ("compact", 720, 640, 0),
-                                          ("advanced", 960, 760, 1)):
+        for name, width, height in (("delivery", 960, 760), ("compact", 720, 640),
+                                    ("advanced", 960, 760)):
             window.resize(width, height)
-            window.active_panel().tabs.setCurrentIndex(tab)
             application.processEvents()
             window.grab().save(str(directory / f"{name}.png"))
-        window.codec_tabs.setCurrentWidget(window.av1_panel)
-        window.av1_panel.tabs.setCurrentIndex(0)
+        window.codec_stack.setCurrentWidget(window.av1_panel)
         application.processEvents()
         window.grab().save(str(directory / "av1.png"))
         report["av1_fgs_default"] = window.av1_panel.settings().fgs_enabled
-        window.codec_tabs.setCurrentWidget(window.vp9_panel)
-        window.vp9_panel.tabs.setCurrentIndex(0)
+        window.codec_stack.setCurrentWidget(window.vp9_panel)
         window.resize(720, 640)
         panel = window.active_panel()
         panel.mode.setCurrentIndex(0)

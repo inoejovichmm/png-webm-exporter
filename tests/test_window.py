@@ -8,6 +8,7 @@ import pytest
 
 from png_webm_exporter.window import ExportWindow
 from png_webm_exporter import resources
+from test_encoding import make_quicktime_png
 
 
 @pytest.fixture
@@ -167,7 +168,7 @@ def test_compact_layout(window, qtbot):
     assert window.size().width() <= 960
     assert window.size().height() <= 900
     assert window.preview.geometry().bottom() < window.scrubber.geometry().top()
-    assert window.color_confirm.geometry().bottom() < window.inputs.height()
+    assert window.color_reminder.geometry().bottom() < window.inputs.height()
     assert window.active_panel().gop.width() >= 100
     assert window.active_panel().gop.specialValueText() == "Auto"
 
@@ -182,7 +183,6 @@ def test_gui_export(window, qtbot, tmp_path, monkeypatch):
     assert not window.source_pixmap.isNull()
     window.scrubber.setValue(2)
     assert "3 / 3" in window.frame_name.text()
-    window.color_confirm.setChecked(True)
     panel = window.active_panel()
     panel.mode.setCurrentIndex(1)
     panel.target.setText("0.02")
@@ -200,3 +200,38 @@ def test_gui_export(window, qtbot, tmp_path, monkeypatch):
     window.export_done.click()
     assert not window.export_dialog.isVisible()
     window.export_dialog.close()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
+def test_movie_locks_fps(window, tmp_path):
+    movie = make_quicktime_png(tmp_path, count=4, fps="24000/1001")
+    assert window.vp9_panel.fps.isEnabled()
+    assert window.av1_panel.fps.isEnabled()
+
+    window.set_movie(movie)
+
+    assert not window.vp9_panel.fps.isEnabled()
+    assert not window.av1_panel.fps.isEnabled()
+    assert window.vp9_panel.fps.currentText() == "24000/1001"
+    assert window.av1_panel.fps.currentText() == "24000/1001"
+    assert window.settings().fps == "24000/1001"
+
+    # Switching codec retains locked fps
+    window.av1_button.click()
+    assert not window.av1_panel.fps.isEnabled()
+    assert window.av1_panel.fps.currentText() == "24000/1001"
+    assert window.settings().fps == "24000/1001"
+
+    # Resetting settings while movie is loaded retains locked fps
+    window.reset_settings()
+    assert not window.av1_panel.fps.isEnabled()
+    assert window.av1_panel.fps.currentText() == "24000/1001"
+    assert window.settings().fps == "24000/1001"
+
+    # Switching back to PNG sequence unlocks fps
+    frames = [tmp_path / f"seq_{index:04d}.png" for index in range(2)]
+    for frame in frames:
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(frame)
+    window.set_frames(frames)
+    assert window.vp9_panel.fps.isEnabled()
+    assert window.av1_panel.fps.isEnabled()

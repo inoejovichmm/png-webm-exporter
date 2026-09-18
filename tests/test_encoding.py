@@ -5,7 +5,7 @@ import subprocess
 import sys
 import threading
 
-from PIL import Image
+from PIL import Image, ImageCms
 import pytest
 
 from png_webm_exporter.encoding import Canceled, Settings, build_args, inspect_frames, inspect_movie, verify_probe, ExportWorker, file_signature
@@ -22,14 +22,14 @@ def frames(tmp_path):
     return files
 
 
-def make_quicktime_png(tmp_path, mode="RGB", pixel_format="rgb24", count=4):
+def make_quicktime_png(tmp_path, mode="RGB", pixel_format="rgb24", count=4, fps="25"):
     frames = []
     for index in range(count):
         path = tmp_path / f"src_{index:04d}.png"
         Image.new(mode, (64, 64), (30 + index, 90, 150) if mode == "RGB" else (30 + index, 90, 150, 128)).save(path)
         frames.append(path)
     movie = tmp_path / "clip.mov"
-    subprocess.run([shutil.which("ffmpeg"), "-hide_banner", "-y", "-framerate", "25",
+    subprocess.run([shutil.which("ffmpeg"), "-hide_banner", "-y", "-framerate", str(fps),
                     "-i", str(tmp_path / "src_%04d.png"), "-c:v", "png",
                     "-pix_fmt", pixel_format, "-f", "mov", str(movie)],
                    check=True, capture_output=True)
@@ -45,8 +45,8 @@ def test_args(frames, tmp_path):
 
 
 def test_movie_args(tmp_path):
-    source = MovieSource(tmp_path / "clip.mov", count=5, width=64, height=64, depth=16, stem="clip")
-    args = build_args(source, Settings(fps="24000/1001"), tmp_path / "out.webm", 20)
+    source = MovieSource(tmp_path / "clip.mov", count=5, width=64, height=64, depth=16, stem="clip", fps="24000/1001")
+    args = build_args(source, Settings(fps="25"), tmp_path / "out.webm", 20)
     assert "image2" not in args
     assert args[args.index("-i") + 1] == str(tmp_path / "clip.mov")
     assert args[args.index("-frames:v") + 1] == "5"
@@ -131,6 +131,24 @@ def test_transparency_rejected(tmp_path):
         inspect_frames(detect_sequence([path]), threading.Event(), lambda *_: None)
 
 
+def test_png_non_srgb_icc_rejected(tmp_path):
+    path = tmp_path / "frame.png"
+    img = Image.new("RGB", (32, 32), (20, 30, 40))
+    lab_bytes = ImageCms.ImageCmsProfile(ImageCms.createProfile("LAB")).tobytes()
+    img.save(path, icc_profile=lab_bytes)
+    with pytest.raises(ValueError, match="non-sRGB color profile"):
+        inspect_frames(detect_sequence([path]), threading.Event(), lambda *_: None)
+
+
+def test_png_srgb_icc_accepted(tmp_path):
+    path = tmp_path / "frame.png"
+    img = Image.new("RGB", (32, 32), (20, 30, 40))
+    srgb_bytes = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    img.save(path, icc_profile=srgb_bytes)
+    dims = inspect_frames(detect_sequence([path]), threading.Event(), lambda *_: None)
+    assert dims == (32, 32, 8)
+
+
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
 def test_inspect_quicktime_png(tmp_path):
     movie = make_quicktime_png(tmp_path, count=4)
@@ -138,6 +156,14 @@ def test_inspect_quicktime_png(tmp_path):
     assert source.count == 4
     assert (source.width, source.height, source.depth) == (64, 64, 8)
     assert source.stem == "clip"
+    assert source.fps == "25"
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
+def test_inspect_quicktime_png_custom_fps(tmp_path):
+    movie = make_quicktime_png(tmp_path, count=4, fps="24000/1001")
+    source = inspect_movie(movie)
+    assert source.fps == "24000/1001"
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
@@ -145,6 +171,31 @@ def test_inspect_movie_rejects_alpha(tmp_path):
     movie = make_quicktime_png(tmp_path, mode="RGBA", pixel_format="rgba", count=3)
     with pytest.raises(ValueError, match="alpha"):
         inspect_movie(movie)
+
+
+def test_inspect_movie_rejects_non_709_color(tmp_path, monkeypatch):
+    movie = tmp_path / "dummy.mov"
+    movie.touch()
+    for invalid_field in [
+        {"color_primaries": "smpte432"},
+        {"color_transfer": "smpte2084"},
+        {"color_space": "bt2020nc"},
+    ]:
+        fake_data = {
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "png",
+                "pix_fmt": "rgb24",
+                "width": 64,
+                "height": 64,
+                "nb_frames": "4",
+                "avg_frame_rate": "25/1",
+                **invalid_field,
+            }]
+        }
+        monkeypatch.setattr("png_webm_exporter.encoding._run_ffprobe", lambda *_: json.dumps(fake_data))
+        with pytest.raises(ValueError, match="non-standard color"):
+            inspect_movie(movie)
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg required")
