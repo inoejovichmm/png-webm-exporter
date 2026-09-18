@@ -122,7 +122,7 @@ def main():
                    "--enable-w32threads" if windows else "--enable-pthreads",
                    "--enable-libvpx", "--enable-libwebp", "--enable-libsvtav1", "--enable-libdav1d",
                    "--enable-zlib", "--enable-encoder=libvpx_vp9,libwebp,libsvtav1,png",
-                   "--enable-decoder=png,vp9,libdav1d", "--enable-parser=png,vp9,av1",
+                   "--enable-decoder=png,vp9,prores,libdav1d", "--enable-parser=png,vp9,av1",
                    "--enable-demuxer=image2,matroska,mov",
                    "--enable-muxer=webm,webp,image2,mov", "--enable-bsf=vp9_superframe",
                    "--enable-protocol=file,pipe",

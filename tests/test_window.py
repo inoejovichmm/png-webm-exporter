@@ -101,6 +101,16 @@ def test_cancel_closes_export_dialog(window, qtbot):
     assert not window.export_dialog.isVisible()
 
 
+def test_export_failure_shows_exit(window):
+    window.create_export_dialog()
+    window.export_dialog.show()
+    window.on_failure("encoding failed")
+    assert not window.export_cancel.isVisible()
+    assert not window.export_open.isVisible()
+    assert window.export_done.isVisible()
+    assert window.export_done.text() == "Exit"
+
+
 def test_frozen_readme_path(tmp_path, monkeypatch):
     source = tmp_path / "application-source"
     source.mkdir()
@@ -142,6 +152,7 @@ def test_gui_export(window, qtbot, tmp_path, monkeypatch):
     assert window.last_output == destination
     assert destination.stat().st_size <= 20_000
     assert window.export_progress.value() == 100
+    assert not window.export_cancel.isVisible()
     assert window.export_open.isVisible()
     assert window.export_done.isVisible()
     window.export_done.click()

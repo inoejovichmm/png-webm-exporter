@@ -177,9 +177,11 @@ def inspect_frames(sequence: Sequence, canceled: threading.Event, progress) -> t
     return expected[:3]
 
 
-MOVIE_PIXEL_DEPTHS = {"rgb24": 8, "rgb48be": 16, "rgb48le": 16}
+MOVIE_PIXEL_DEPTHS = {"rgb24": 8, "rgb48be": 16, "rgb48le": 16,
+                      "yuv444p10le": 10, "yuv444p12le": 12}
 MOVIE_ALPHA_FORMATS = {"rgba", "argb", "abgr", "bgra", "rgba64be", "rgba64le",
-                       "ya8", "ya16be", "ya16le", "gbrap", "gbrap16be", "gbrap16le"}
+                       "ya8", "ya16be", "ya16le", "gbrap", "gbrap16be", "gbrap16le",
+                       "yuva444p10le", "yuva444p12le"}
 
 
 def _run_ffprobe(arguments: list[str]) -> str:
@@ -204,16 +206,19 @@ def inspect_movie(path: Path) -> MovieSource:
     if len(videos) != 1:
         raise ValueError("Select a movie with exactly one video stream and no other streams.")
     video = videos[0]
-    if video.get("codec_name") != "png":
-        raise ValueError("Only QuickTime PNG movies are supported. Export from After Effects "
-                         "as QuickTime with the PNG codec (codec_name must be png).")
+    if video.get("codec_name") not in ("png", "prores"):
+        raise ValueError("Only QuickTime PNG or ProRes 4444 movies are supported. Export from "
+                         "After Effects with the ProRes 4444 codec.")
     pixel_format = video.get("pix_fmt")
+    if video.get("codec_name") == "prores" and video.get("codec_tag_string") == "ap4h" and not pixel_format:
+        # This minimal bundled ffprobe omits the decoded format for some ProRes 4444 streams.
+        pixel_format = "yuv444p12le"
     if pixel_format in MOVIE_ALPHA_FORMATS:
-        raise ValueError("The movie carries an alpha channel. Export QuickTime PNG without alpha "
-                         "(Trillions of Colors, not Trillions of Colors+).")
+        raise ValueError("The movie carries an alpha channel. Export ProRes 4444 without alpha "
+                         "or flatten transparency before exporting.")
     if pixel_format not in MOVIE_PIXEL_DEPTHS:
-        raise ValueError(f"Unsupported pixel format {pixel_format!r}. Export QuickTime PNG as RGB "
-                         "at 8 or 16 bits per channel without alpha.")
+        raise ValueError(f"Unsupported pixel format {pixel_format!r}. Export ProRes 4444 as "
+                         "10-bit 4:4:4 without alpha.")
     width, height = video.get("width", 0), video.get("height", 0)
     if not (isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0):
         raise ValueError("Could not determine the movie's frame dimensions.")

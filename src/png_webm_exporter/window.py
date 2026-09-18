@@ -2,6 +2,7 @@ from dataclasses import asdict
 from fractions import Fraction
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 
 from PySide6.QtCore import QEvent, Qt, QSettings, QUrl
@@ -263,11 +264,11 @@ class ExportWindow(QMainWindow):
         source = QVBoxLayout()
         select_row = QHBoxLayout()
         self.choose_input = QPushButton("Select input...")
-        self.choose_input.setToolTip("Choose a PNG sequence folder with frames or a single QuickTime PNG movie.")
+        self.choose_input.setToolTip("Choose a PNG sequence folder with frames or a single ProRes 4444 movie.")
         input_menu = QMenu(self.choose_input)
         folder_action = QAction("PNG sequence folder with frames", self.choose_input)
         folder_action.triggered.connect(self.choose_folder)
-        movie_action = QAction("QuickTime PNG", self.choose_input)
+        movie_action = QAction("ProRes 4444 movie", self.choose_input)
         movie_action.triggered.connect(self.choose_movie)
         input_menu.addAction(folder_action)
         input_menu.addAction(movie_action)
@@ -391,17 +392,16 @@ class ExportWindow(QMainWindow):
             "6. Click OK, set the Output To folder to an empty folder, and render.\n"
             "7. Back here, choose \"PNG sequence folder with frames\" and select that folder. It must "
             "contain only the frames of one sequence, numbered consecutively with no gaps.\n\n"
-            "QuickTime PNG movie (single file)\n\n"
+            "ProRes 4444 movie (single file)\n\n"
             "1. Select your composition, then choose Composition > Add to Render Queue.\n"
             "2. Click the Output Module (the blue text next to \"Output Module\").\n"
             "3. Set Format to \"QuickTime\".\n"
-            "4. Click \"Format Options...\" and set the Video Codec to \"PNG\", then click OK.\n"
+            "4. Click \"Format Options...\" and set the Video Codec to \"Apple ProRes 4444\", then click OK.\n"
             "5. Set Channels to \"RGB\" (not RGB + Alpha). This app rejects movies that carry an "
             "alpha channel, so flatten any transparency onto a solid background in your comp first.\n"
-            "6. Set Depth to \"Millions of Colors\" (8-bit) or, for a 16-bit master, "
-            "\"Trillions of Colors\".\n"
+            "6. Set the ProRes 4444 depth to 10-bit or 12-bit.\n"
             "7. Click OK, set the Output To file (a .mov), and render.\n"
-            "8. Back here, choose \"QuickTime PNG\" and select that .mov file.\n\n"
+            "8. Back here, choose \"ProRes 4444 movie\" and select that .mov file.\n\n"
             "Both: work in an sRGB / Rec.709 project. This app tags output as Rec.709 and does not "
             "convert ICC profiles, so P3 or HDR sources will look wrong.")
 
@@ -440,8 +440,9 @@ class ExportWindow(QMainWindow):
         self.set_frames(pngs)
 
     def choose_movie(self):
-        name, _ = QFileDialog.getOpenFileName(self, "Select a QuickTime PNG movie", "",
-                                              "QuickTime PNG movie (*.mov *.MOV)")
+        name, _ = QFileDialog.getOpenFileName(
+            self, "Select a ProRes 4444 movie", str(Path.home() / "Downloads"),
+            "Movie files (*.mov *.MOV);;All files (*)")
         if name:
             self.set_movie(Path(name))
 
@@ -486,9 +487,9 @@ class ExportWindow(QMainWindow):
                 poster = Path(folder) / "poster.png"
                 extract_poster(source.path, poster)
                 self.source_pixmap = QPixmap(str(poster))
-        except (OSError, ValueError):
+        except (OSError, ValueError, subprocess.SubprocessError):
             self.source_pixmap = QPixmap()
-        self.frame_name.setText(f"QuickTime PNG movie: {source.path.name}")
+        self.frame_name.setText(f"ProRes 4444 movie: {source.path.name}")
         self.scale_preview()
 
     def show_frame(self, index):
@@ -523,7 +524,7 @@ class ExportWindow(QMainWindow):
         if isinstance(self.sequence, MovieSource):
             self.summary.setText(f"{self.sequence.count} frames | {duration}\n"
                                  f"{self.sequence.width} x {self.sequence.height} px | {self.sequence.depth}-bit RGB\n"
-                                 f"QuickTime PNG movie")
+                                 f"ProRes 4444 movie")
         else:
             self.summary.setText(f"{self.sequence.count} frames | {duration}\n"
                                  f"{self.source_pixmap.width()} x {self.source_pixmap.height()} px\n"
@@ -615,7 +616,7 @@ class ExportWindow(QMainWindow):
             return
         try:
             if self.sequence is None:
-                raise ValueError("Select a folder of PNG frames or a QuickTime PNG movie first.")
+                raise ValueError("Select a folder of PNG frames or a ProRes 4444 movie first.")
             if not self.color_confirm.isChecked():
                 raise ValueError("Confirm the source color space and flattened transparency before exporting.")
             settings = self.settings()
@@ -682,6 +683,7 @@ class ExportWindow(QMainWindow):
             names = ", ".join(Path(path).name for path in frame_files)
             self.export_phase.setText("Export complete and verified; frames saved")
             self.export_details.setText(self.export_details.text() + f" | WebP frames: {names}")
+        self.export_cancel.setVisible(False)
         self.export_open.setVisible(True)
         self.export_done.setVisible(True)
 
@@ -690,6 +692,9 @@ class ExportWindow(QMainWindow):
         self.export_progress.setRange(0, 100)
         self.export_progress.setValue(0)
         self.export_details.setText(message.splitlines()[0])
+        self.export_cancel.setVisible(False)
+        self.export_done.setText("Exit")
+        self.export_done.setVisible(True)
 
     def on_canceled(self):
         self.export_phase.setText("Canceled; destination unchanged")
