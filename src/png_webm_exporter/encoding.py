@@ -19,6 +19,32 @@ from .sequence import Sequence, MovieSource, clean_stem, detect_sequence
 from .size_search import SizeSearch
 
 
+BUILTIN_PRESETS: dict[str, dict] = {
+    "Good gradients on Android": {
+        "codec": "av1",
+        "crf": 8,
+        "target_bytes": None,
+        "full_range": False,
+        "preset": 8,
+        "tune": 0,
+        "fgs_enabled": False,
+        "fgs_level": 8,
+        "fgs_denoise": False,
+    },
+    "Good gradients on Android with Embedded Grain": {
+        "codec": "av1",
+        "crf": 8,
+        "target_bytes": None,
+        "full_range": False,
+        "preset": 8,
+        "tune": 0,
+        "fgs_enabled": True,
+        "fgs_level": 4,
+        "fgs_denoise": False,
+    },
+}
+
+
 @dataclass(frozen=True)
 class Settings:
     fps: str = "25"
@@ -32,7 +58,7 @@ class Settings:
     aq_mode: int = 0
     row_mt: bool = True
     tile_columns: int = 2
-    threads: int = 8
+    threads: int = 0
     gop: int = 0
     preset: int = 8
     tune: int = 1
@@ -40,7 +66,7 @@ class Settings:
     fgs_level: int = 8
     fgs_denoise: bool = False
     export_frames: bool = False
-    frame_quality: int = 90
+    frame_quality: int = 85
 
     def validate(self) -> None:
         if self.codec not in ("vp9", "av1"):

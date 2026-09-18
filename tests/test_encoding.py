@@ -8,7 +8,17 @@ import threading
 from PIL import Image, ImageCms
 import pytest
 
-from png_webm_exporter.encoding import Canceled, Settings, build_args, inspect_frames, inspect_movie, verify_probe, ExportWorker, file_signature
+from png_webm_exporter.encoding import (
+    BUILTIN_PRESETS,
+    Canceled,
+    Settings,
+    build_args,
+    inspect_frames,
+    inspect_movie,
+    verify_probe,
+    ExportWorker,
+    file_signature,
+)
 from png_webm_exporter.sequence import MovieSource, detect_sequence
 
 
@@ -116,6 +126,29 @@ def test_av1_settings_validation():
         Settings(codec="av1", fgs_level=51).validate()
     with pytest.raises(ValueError):
         Settings(codec="h264").validate()
+
+
+def test_builtin_presets_definitions():
+    assert "Good gradients on Android" in BUILTIN_PRESETS
+    android = BUILTIN_PRESETS["Good gradients on Android"]
+    assert android["codec"] == "av1"
+    assert android["crf"] == 8
+    assert android["target_bytes"] is None
+    assert android["fgs_enabled"] is False
+    assert android["preset"] == 8
+    assert android["tune"] == 0
+    assert android["fgs_denoise"] is False
+
+    assert "Good gradients on Android with Embedded Grain" in BUILTIN_PRESETS
+    android_grain = BUILTIN_PRESETS["Good gradients on Android with Embedded Grain"]
+    assert android_grain["codec"] == "av1"
+    assert android_grain["crf"] == 8
+    assert android_grain["target_bytes"] is None
+    assert android_grain["fgs_enabled"] is True
+    assert android_grain["fgs_level"] == 4
+    assert android_grain["preset"] == 8
+    assert android_grain["tune"] == 0
+    assert android_grain["fgs_denoise"] is False
 
 
 def test_av1_crf_zero_is_rejected_in_command_building(frames, tmp_path):
