@@ -8,13 +8,13 @@ import tempfile
 from PySide6.QtCore import QEvent, Qt, QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
     QGroupBox, QPushButton, QRadioButton, QSizePolicy, QSlider, QSpinBox, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
-from .encoding import ExportWorker, Settings, extract_poster, file_signature, inspect_movie
+from .encoding import BUILTIN_PRESETS, ExportWorker, Settings, extract_poster, file_signature, inspect_movie
 from .resources import readme_text
 from .sequence import MovieSource, detect_sequence
 from .size_search import megabytes_to_bytes
@@ -58,11 +58,11 @@ class CodecPanel(QWidget):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        standard = QGroupBox("Standard")
+        standard = QGroupBox()
         content_layout.addWidget(standard)
         form = QFormLayout(standard)
         self.delivery_form = form
-        form.setVerticalSpacing(16)
+        form.setVerticalSpacing(10)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.fps = QComboBox()
         self.fps.setEditable(True)
@@ -120,25 +120,45 @@ class CodecPanel(QWidget):
             self.fgs_denoise = QCheckBox()
             add_field(standard_form, "Film grain denoise source", self.fgs_denoise, "Denoise the source before analyzing grain for synthesis. Leave off for already-clean renders; turn on only when the source itself carries grain you want removed and re-synthesized.")
         outer.addWidget(content)
-        common = QGroupBox("Common")
+        common = QGroupBox()
+        common.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         common_form = QFormLayout(common)
-        common_form.setVerticalSpacing(12)
-        self.threads = make_spin(0, 256, 8)
+        common_form.setVerticalSpacing(8)
+        self.threads = make_spin(0, 256, 0)
         self.threads.setSpecialValueText("Auto")
         add_field(common_form, "Threads", self.threads, "Maximum encoder threads. Zero lets the encoder choose. More threads do not guarantee faster encoding.")
         self.gop = make_spin(0, 1_000_000, 0)
         self.gop.setSpecialValueText("Auto")
         add_field(common_form, "Max keyframe distance", self.gop, "Maximum frames between keyframes. Zero leaves the encoder default. Shorter distances improve seeking but can increase file size.")
         self.export_frames = QCheckBox()
-        add_field(common_form, "Export first and last frames (WebP)", self.export_frames, "After the WebM is verified, also save the first and last frames next to it as <name>_first_frame.webp and <name>_last_frame.webp. Frames are extracted from the finished video and encoded with libwebp.")
-        self.frame_quality = make_spin(0, 100, 90)
+        export_frames_label = add_field(common_form, "Export first and last frames (WebP)", self.export_frames, "After the WebM is verified, also save the first and last frames next to it as <name>_first_frame.webp and <name>_last_frame.webp. Frames are extracted from the finished video and encoded with libwebp.")
+        export_frames_label.setWordWrap(False)
+        self.frame_quality = make_spin(0, 100, 85)
         self.frame_quality_label = add_field(common_form, "Frame WebP quality", self.frame_quality, "libwebp quality passed as -q:v, from 0 (smallest) to 100. Setting 100 switches libwebp into lossless mode instead of using the quality scale.")
         outer.addWidget(common)
         self.mode.currentIndexChanged.connect(self.update_mode)
         self.mode.currentIndexChanged.connect(lambda *_: self.on_change())
         self.fps.currentTextChanged.connect(lambda *_: self.on_change())
+        self.crf.valueChanged.connect(lambda *_: self.on_change())
+        self.target.textChanged.connect(lambda *_: self.on_change())
+        self.range.currentIndexChanged.connect(lambda *_: self.on_change())
+        if codec == "vp9":
+            self.bitrate.valueChanged.connect(lambda *_: self.on_change())
+            self.alt_ref.toggled.connect(lambda *_: self.on_change())
+            self.arnr.valueChanged.connect(lambda *_: self.on_change())
+            self.aq.currentIndexChanged.connect(lambda *_: self.on_change())
+            self.row_mt.toggled.connect(lambda *_: self.on_change())
+            self.tiles.valueChanged.connect(lambda *_: self.on_change())
+        else:
+            self.preset.valueChanged.connect(lambda *_: self.on_change())
+            self.tune.currentIndexChanged.connect(lambda *_: self.on_change())
+            self.fgs_enabled.toggled.connect(lambda *_: self.on_change())
+            self.fgs_level.valueChanged.connect(lambda *_: self.on_change())
+            self.fgs_denoise.toggled.connect(lambda *_: self.on_change())
         self.export_frames.toggled.connect(self.update_frame_controls)
         self.frame_quality.valueChanged.connect(self.update_frame_controls)
+        self.threads.valueChanged.connect(lambda *_: self.on_change())
+        self.gop.valueChanged.connect(lambda *_: self.on_change())
         if codec == "av1":
             self.fgs_enabled.toggled.connect(self.update_fgs_controls)
 
@@ -236,6 +256,69 @@ class CodecPanel(QWidget):
         self.update_mode()
         self.update_frame_controls()
 
+    def standard_settings(self):
+        data = {
+            "codec": self.codec,
+            "crf": self.crf.value(),
+            "target_bytes": megabytes_to_bytes(self.target.text()) if self.mode.currentIndex() else None,
+            "full_range": self.range.currentIndex() == 0,
+        }
+        if self.codec == "vp9":
+            data.update({
+                "bitrate_kbps": self.bitrate.value(),
+                "auto_alt_ref": self.alt_ref.isChecked(),
+                "arnr_maxframes": self.arnr.value(),
+                "aq_mode": self.aq.currentIndex(),
+                "row_mt": self.row_mt.isChecked(),
+                "tile_columns": self.tiles.value(),
+            })
+        else:
+            data.update({
+                "preset": self.preset.value(),
+                "tune": self.tune.currentIndex(),
+                "fgs_enabled": self.fgs_enabled.isChecked(),
+                "fgs_level": self.fgs_level.value(),
+                "fgs_denoise": self.fgs_denoise.isChecked(),
+            })
+        return data
+
+    def apply_standard(self, data):
+        if "crf" in data:
+            self.crf.setValue(data["crf"])
+        if "target_bytes" in data:
+            target_bytes = data["target_bytes"]
+            self.mode.setCurrentIndex(1 if target_bytes is not None else 0)
+            self.target.setText(str(target_bytes / 1_000_000) if target_bytes is not None else "10")
+        if "full_range" in data:
+            self.range.setCurrentIndex(0 if data["full_range"] else 1)
+        if self.codec == "vp9":
+            if "bitrate_kbps" in data:
+                self.bitrate.setValue(data["bitrate_kbps"])
+            if "auto_alt_ref" in data:
+                self.alt_ref.setChecked(data["auto_alt_ref"])
+            if "arnr_maxframes" in data:
+                self.arnr.setValue(data["arnr_maxframes"])
+            if "aq_mode" in data:
+                self.aq.setCurrentIndex(data["aq_mode"])
+            if "row_mt" in data:
+                self.row_mt.setChecked(data["row_mt"])
+            if "tile_columns" in data:
+                self.tiles.setValue(data["tile_columns"])
+        else:
+            if "preset" in data:
+                self.preset.setValue(data["preset"])
+            if "tune" in data:
+                self.tune.setCurrentIndex(data["tune"])
+            if "fgs_enabled" in data:
+                self.fgs_enabled.setChecked(data["fgs_enabled"])
+            if "fgs_level" in data:
+                self.fgs_level.setValue(data["fgs_level"])
+            if "fgs_denoise" in data:
+                self.fgs_denoise.setChecked(data["fgs_denoise"])
+            self.update_fgs_controls()
+        self.update_mode()
+        self.on_change()
+
 
 class ExportWindow(QMainWindow):
     def __init__(self, preferences=None):
@@ -247,13 +330,15 @@ class ExportWindow(QMainWindow):
         self.closing = False
         self.readme_dialog = None
         self.source_pixmap = QPixmap()
+        self.user_presets = {}
+        self._applying_preset = False
         self.setWindowTitle("PNG to WebM")
         self.resize(900, 760)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(24, 16, 24, 16)
+        layout.setSpacing(10)
         self.readme_button = QPushButton("README")
         self.readme_button.setToolTip("Read the application README")
         self.readme_button.clicked.connect(self.show_readme)
@@ -312,12 +397,12 @@ class ExportWindow(QMainWindow):
         columns.addLayout(source, 1)
         self.codec_toggle = QButtonGroup(self)
         codec_switch = QHBoxLayout()
+        codec_switch.setContentsMargins(0, 0, 0, 0)
         codec_switch.setSpacing(0)
         self.vp9_button = QRadioButton("VP9")
         self.av1_button = QRadioButton("AV1")
         for button in (self.vp9_button, self.av1_button):
             button.setAutoExclusive(True)
-            button.setMinimumHeight(30)
             self.codec_toggle.addButton(button)
             codec_switch.addWidget(button)
         self.vp9_button.toggled.connect(lambda checked: self.set_codec("vp9") if checked else None)
@@ -327,8 +412,37 @@ class ExportWindow(QMainWindow):
         self.av1_panel = CodecPanel("av1", self.on_panel_change)
         self.codec_stack.addWidget(self.vp9_panel)
         self.codec_stack.addWidget(self.av1_panel)
+        self._connect_common_sync()
         self.vp9_button.setChecked(True)
         codec_column = QVBoxLayout()
+        codec_column.setSpacing(4)
+        preset_row = QHBoxLayout()
+        preset_row.setContentsMargins(0, 0, 0, 0)
+        preset_label = QLabel("Preset:")
+        self.preset_combo = QComboBox()
+        self.preset_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.preset_combo.setMinimumContentsLength(10)
+        self.preset_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.preset_combo.setToolTip("Select a built-in or custom preset to apply standard settings.")
+        self.preset_combo.setAccessibleName("Presets")
+        self.preset_menu_button = QPushButton("...")
+        self.preset_menu_button.setToolTip("Manage presets")
+        self.preset_menu_button.setAccessibleName("Manage presets")
+        self.preset_menu = QMenu(self.preset_menu_button)
+        self.save_preset_action = QAction("Save current settings as a preset", self.preset_menu_button)
+        self.preset_menu_separator = QAction(self.preset_menu_button)
+        self.preset_menu_separator.setSeparator(True)
+        self.rename_preset_action = QAction("Rename preset", self.preset_menu_button)
+        self.delete_preset_action = QAction("Delete preset", self.preset_menu_button)
+        self.preset_menu_button.setMenu(self.preset_menu)
+        preset_row.addWidget(preset_label)
+        preset_row.addWidget(self.preset_combo, 1)
+        preset_row.addWidget(self.preset_menu_button)
+        self.preset_combo.currentIndexChanged.connect(self.on_preset_combo_changed)
+        self.save_preset_action.triggered.connect(self.save_current_as_preset)
+        self.rename_preset_action.triggered.connect(self.rename_preset)
+        self.delete_preset_action.triggered.connect(self.delete_preset)
+        codec_column.addLayout(preset_row)
         codec_column.addLayout(codec_switch)
         codec_column.addWidget(self.codec_stack)
         columns.addLayout(codec_column, 1)
@@ -378,7 +492,95 @@ class ExportWindow(QMainWindow):
     def active_panel(self):
         return self.codec_stack.currentWidget()
 
+    def _sync_common(self, source_panel):
+        if getattr(self, "_syncing_common", False):
+            return
+        self._syncing_common = True
+        try:
+            target = self.av1_panel if source_panel is self.vp9_panel else self.vp9_panel
+            if target.fps.currentText() != source_panel.fps.currentText():
+                target.fps.setCurrentText(source_panel.fps.currentText())
+            if target.threads.value() != source_panel.threads.value():
+                target.threads.setValue(source_panel.threads.value())
+            if target.gop.value() != source_panel.gop.value():
+                target.gop.setValue(source_panel.gop.value())
+            if target.export_frames.isChecked() != source_panel.export_frames.isChecked():
+                target.export_frames.setChecked(source_panel.export_frames.isChecked())
+            if target.frame_quality.value() != source_panel.frame_quality.value():
+                target.frame_quality.setValue(source_panel.frame_quality.value())
+            target.update_frame_controls()
+        finally:
+            self._syncing_common = False
+
+    def _connect_common_sync(self):
+        self._syncing_common = False
+
+        def make_sync(source, target):
+            def sync_fps(text):
+                if self._syncing_common:
+                    return
+                self._syncing_common = True
+                try:
+                    if target.fps.currentText() != text:
+                        target.fps.setCurrentText(text)
+                finally:
+                    self._syncing_common = False
+
+            def sync_threads(val):
+                if self._syncing_common:
+                    return
+                self._syncing_common = True
+                try:
+                    if target.threads.value() != val:
+                        target.threads.setValue(val)
+                finally:
+                    self._syncing_common = False
+
+            def sync_gop(val):
+                if self._syncing_common:
+                    return
+                self._syncing_common = True
+                try:
+                    if target.gop.value() != val:
+                        target.gop.setValue(val)
+                finally:
+                    self._syncing_common = False
+
+            def sync_export_frames(checked):
+                if self._syncing_common:
+                    return
+                self._syncing_common = True
+                try:
+                    if target.export_frames.isChecked() != checked:
+                        target.export_frames.setChecked(checked)
+                        target.update_frame_controls()
+                finally:
+                    self._syncing_common = False
+
+            def sync_frame_quality(val):
+                if self._syncing_common:
+                    return
+                self._syncing_common = True
+                try:
+                    if target.frame_quality.value() != val:
+                        target.frame_quality.setValue(val)
+                        target.update_frame_controls()
+                finally:
+                    self._syncing_common = False
+
+            source.fps.currentTextChanged.connect(sync_fps)
+            source.threads.valueChanged.connect(sync_threads)
+            source.gop.valueChanged.connect(sync_gop)
+            source.export_frames.toggled.connect(sync_export_frames)
+            source.frame_quality.valueChanged.connect(sync_frame_quality)
+
+        make_sync(self.vp9_panel, self.av1_panel)
+        make_sync(self.av1_panel, self.vp9_panel)
+
     def set_codec(self, codec):
+        current = self.active_panel()
+        if current is not None:
+            self._sync_common(current)
         if codec == "av1":
             self.codec_stack.setCurrentWidget(self.av1_panel)
         else:
@@ -389,6 +591,7 @@ class ExportWindow(QMainWindow):
         self.update_fps_state()
         self.update_summary()
         self.update_output_summary()
+        self.update_preset_selection()
 
     def help_button(self, description, handler):
         button = QPushButton("How to export")
@@ -597,7 +800,176 @@ class ExportWindow(QMainWindow):
     def settings(self):
         return self.active_panel().settings()
 
+    def load_user_presets(self):
+        raw = self.preferences.value("user_presets")
+        if raw:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {}
+
+    def save_user_presets(self):
+        self.preferences.setValue("user_presets", json.dumps(self.user_presets))
+
+    def all_presets(self):
+        return {**BUILTIN_PRESETS, **self.user_presets}
+
+    def refresh_preset_combo(self, selected=None):
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        self.preset_combo.addItem("Custom")
+        for name in BUILTIN_PRESETS:
+            self.preset_combo.addItem(name)
+        for name in sorted(self.user_presets.keys()):
+            self.preset_combo.addItem(name)
+        if selected is not None:
+            index = self.preset_combo.findText(selected)
+            if index >= 0:
+                self.preset_combo.setCurrentIndex(index)
+            else:
+                self.preset_combo.setCurrentIndex(0)
+        else:
+            self.preset_combo.setCurrentIndex(0)
+        self.preset_combo.blockSignals(False)
+        self.update_preset_buttons()
+
+    def on_preset_combo_changed(self, index):
+        if self._applying_preset:
+            return
+        name = self.preset_combo.currentText()
+        if name == "Custom":
+            self.update_preset_buttons()
+            return
+        presets = self.all_presets()
+        if name in presets:
+            self.apply_preset(name)
+
+    def apply_preset(self, name):
+        presets = self.all_presets()
+        if name not in presets:
+            return
+        data = presets[name]
+        self._applying_preset = True
+        try:
+            codec = data.get("codec", "vp9")
+            if codec == "av1":
+                self.av1_button.setChecked(True)
+            else:
+                self.vp9_button.setChecked(True)
+            self.active_panel().apply_standard(data)
+            index = self.preset_combo.findText(name)
+            if index >= 0 and self.preset_combo.currentIndex() != index:
+                self.preset_combo.blockSignals(True)
+                self.preset_combo.setCurrentIndex(index)
+                self.preset_combo.blockSignals(False)
+        finally:
+            self._applying_preset = False
+        self.update_preset_buttons()
+
+    def save_current_as_preset(self):
+        name, ok = QInputDialog.getText(self, "Save preset", "Preset name:")
+        if not ok or not name or not name.strip():
+            return
+        name = name.strip()
+        if name == "Custom":
+            QMessageBox.warning(self, "Invalid preset name", "Cannot use 'Custom' as a preset name.")
+            return
+        if name in BUILTIN_PRESETS:
+            QMessageBox.warning(self, "Cannot overwrite built-in preset",
+                                f"'{name}' is a built-in preset and cannot be overwritten.")
+            return
+        if name in self.user_presets:
+            if QMessageBox.question(
+                    self, "Overwrite preset?", f"A preset named '{name}' already exists. Overwrite it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+        self.user_presets[name] = self.active_panel().standard_settings()
+        self.save_user_presets()
+        self.refresh_preset_combo(selected=name)
+
+    def rename_preset(self):
+        name = self.preset_combo.currentText()
+        if name in BUILTIN_PRESETS or name == "Custom" or name not in self.user_presets:
+            return
+        new_name, ok = QInputDialog.getText(self, "Rename preset", "New preset name:", text=name)
+        if not ok or not new_name or not new_name.strip() or new_name.strip() == name:
+            return
+        new_name = new_name.strip()
+        if new_name == "Custom":
+            QMessageBox.warning(self, "Invalid preset name", "Cannot use 'Custom' as a preset name.")
+            return
+        if new_name in BUILTIN_PRESETS:
+            QMessageBox.warning(self, "Invalid preset name",
+                                f"'{new_name}' is a built-in preset name and cannot be used.")
+            return
+        if new_name in self.user_presets:
+            if QMessageBox.question(
+                    self, "Overwrite preset?", f"A preset named '{new_name}' already exists. Overwrite it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+        data = self.user_presets.pop(name)
+        self.user_presets[new_name] = data
+        self.save_user_presets()
+        self.refresh_preset_combo(selected=new_name)
+
+    def delete_preset(self):
+        name = self.preset_combo.currentText()
+        if name in BUILTIN_PRESETS or name == "Custom" or name not in self.user_presets:
+            return
+        if QMessageBox.question(
+                self, "Delete preset", f"Are you sure you want to delete preset '{name}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        del self.user_presets[name]
+        self.save_user_presets()
+        self.refresh_preset_combo(selected="Custom")
+
+    def update_preset_selection(self):
+        if self._applying_preset or not hasattr(self, "preset_combo"):
+            return
+        current_settings = self.active_panel().standard_settings()
+        current_name = self.preset_combo.currentText()
+        presets = self.all_presets()
+        if current_name in presets and presets[current_name] == current_settings:
+            self.update_preset_buttons()
+            return
+        for name, data in presets.items():
+            if data == current_settings:
+                index = self.preset_combo.findText(name)
+                if index >= 0:
+                    self.preset_combo.blockSignals(True)
+                    self.preset_combo.setCurrentIndex(index)
+                    self.preset_combo.blockSignals(False)
+                    self.update_preset_buttons()
+                    return
+        index = self.preset_combo.findText("Custom")
+        if index >= 0:
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(index)
+            self.preset_combo.blockSignals(False)
+        self.update_preset_buttons()
+
+    def update_preset_buttons(self):
+        if not hasattr(self, "preset_combo"):
+            return
+        for action in (self.save_preset_action, self.preset_menu_separator,
+                       self.rename_preset_action, self.delete_preset_action):
+            self.preset_menu.removeAction(action)
+        self.preset_menu.addAction(self.save_preset_action)
+        if self.preset_combo.currentText() in self.user_presets:
+            self.preset_menu.addAction(self.preset_menu_separator)
+            self.preset_menu.addAction(self.rename_preset_action)
+            self.preset_menu.addAction(self.delete_preset_action)
+
     def restore_settings(self):
+        self.user_presets = self.load_user_presets()
+        self.refresh_preset_combo()
         defaults = {"vp9": Settings(), "av1": Settings(codec="av1", crf=30)}
         legacy = self.preferences.value("encoding")
         for panel in (self.vp9_panel, self.av1_panel):
@@ -614,13 +986,17 @@ class ExportWindow(QMainWindow):
         active = self.preferences.value("codec", "vp9")
         self.av1_button.setChecked(active == "av1")
         self.vp9_button.setChecked(active != "av1")
+        self._sync_common(self.active_panel())
         self.update_fps_state()
+        self.update_preset_selection()
 
     def reset_settings(self):
         panel = self.active_panel()
         panel.apply(Settings() if panel.codec == "vp9" else Settings(codec="av1", crf=30))
         self.preferences.remove(f"encoding_{panel.codec}")
+        self._sync_common(panel)
         self.update_fps_state()
+        self.update_preset_selection()
 
     def create_export_dialog(self):
         dialog = QDialog(self)
@@ -699,8 +1075,11 @@ class ExportWindow(QMainWindow):
     def set_busy(self, busy):
         for control in (self.inputs, self.vp9_button, self.av1_button, self.destination, self.browse,
                 self.webm_name, self.first_frame_name, self.last_frame_name,
-                self.reset, self.log_button, self.readme_button, self.export):
+                self.reset, self.log_button, self.readme_button, self.export,
+                self.preset_combo, self.preset_menu_button):
             control.setEnabled(not busy)
+        if not busy:
+            self.update_preset_buttons()
         if hasattr(self, "export_cancel"):
             self.export_cancel.setEnabled(busy)
         if not busy:

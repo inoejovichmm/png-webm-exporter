@@ -3,7 +3,7 @@ import shutil
 
 from PIL import Image
 from PySide6.QtCore import QSize, QSettings
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QSizePolicy
 import pytest
 
 from png_webm_exporter.window import ExportWindow
@@ -19,6 +19,10 @@ def window(qtbot, tmp_path, monkeypatch):
     qtbot.addWidget(widget)
     widget.show()
     return widget
+
+
+def preset_menu_texts(window):
+    return [action.text() for action in window.preset_menu.actions() if not action.isSeparator()]
 
 
 def test_target_controls_and_reset(window):
@@ -56,12 +60,64 @@ def test_codec_toggle(window):
     assert window.active_panel().codec == "vp9"
 
 
+def test_codec_toggle_preserves_common_settings(window):
+    # Set custom common settings on VP9
+    window.vp9_button.click()
+    vp9_panel = window.active_panel()
+    vp9_panel.fps.setCurrentText("60")
+    vp9_panel.threads.setValue(16)
+    vp9_panel.gop.setValue(50)
+    vp9_panel.export_frames.setChecked(True)
+    vp9_panel.frame_quality.setValue(95)
+    vp9_panel.crf.setValue(15)
+
+    # Switch to AV1
+    window.av1_button.click()
+    av1_panel = window.active_panel()
+    assert av1_panel.codec == "av1"
+
+    # Common settings must NOT change when switching encoder
+    assert av1_panel.fps.currentText() == "60"
+    assert av1_panel.threads.value() == 16
+    assert av1_panel.gop.value() == 50
+    assert av1_panel.export_frames.isChecked()
+    assert av1_panel.frame_quality.value() == 95
+    # Encoder-dependent setting (CRF) remains encoder-specific
+    assert av1_panel.crf.value() == 30
+
+    # Modify common settings while in AV1
+    av1_panel.threads.setValue(4)
+    av1_panel.gop.setValue(100)
+    av1_panel.export_frames.setChecked(False)
+
+    # Switch back to VP9
+    window.vp9_button.click()
+    assert window.active_panel().codec == "vp9"
+    assert vp9_panel.fps.currentText() == "60"
+    assert vp9_panel.threads.value() == 4
+    assert vp9_panel.gop.value() == 100
+    assert not vp9_panel.export_frames.isChecked()
+    assert vp9_panel.frame_quality.value() == 95
+    assert vp9_panel.crf.value() == 15
+
+
 def test_webp_frame_controls_are_common(window):
     panel = window.active_panel()
-    common_form = panel.export_frames.parentWidget().layout()
-    assert common_form.labelForField(panel.export_frames).text() == "Export first and last frames (WebP)"
+    common = panel.export_frames.parentWidget()
+    common_form = common.layout()
+    export_frames_label = common_form.labelForField(panel.export_frames)
+    assert export_frames_label.text() == "Export first and last frames (WebP)"
+    assert not export_frames_label.wordWrap()
+    assert common.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
     assert common_form.labelForField(panel.frame_quality) is panel.frame_quality_label
     assert panel.delivery_form.labelForField(panel.export_frames) is None
+
+
+def test_common_defaults(window):
+    panel = window.active_panel()
+    assert panel.threads.value() == 0
+    assert panel.threads.text() == "Auto"
+    assert panel.frame_quality.value() == 85
 
 
 def test_crf_help_matches_mode(window, monkeypatch):
@@ -235,3 +291,158 @@ def test_movie_locks_fps(window, tmp_path):
     window.set_frames(frames)
     assert window.vp9_panel.fps.isEnabled()
     assert window.av1_panel.fps.isEnabled()
+
+
+def test_preset_combo_contains_builtins(window):
+    items = [window.preset_combo.itemText(i) for i in range(window.preset_combo.count())]
+    assert "Custom" in items
+    assert "Good gradients on Android" in items
+    assert "Good gradients on Android with Embedded Grain" in items
+    assert preset_menu_texts(window) == ["Save current settings as a preset"]
+
+
+def test_apply_builtin_presets_and_common_settings_untouched(window):
+    # Set custom common settings and FPS on AV1 panel
+    window.av1_button.click()
+    av1_panel = window.active_panel()
+    av1_panel.fps.setCurrentText("60")
+    av1_panel.threads.setValue(16)
+    av1_panel.gop.setValue(50)
+    av1_panel.export_frames.setChecked(True)
+    av1_panel.frame_quality.setValue(95)
+
+    # Apply "Good gradients on Android"
+    idx = window.preset_combo.findText("Good gradients on Android")
+    window.preset_combo.setCurrentIndex(idx)
+
+    assert window.active_panel().codec == "av1"
+    av1_panel = window.active_panel()
+    assert av1_panel.crf.value() == 8
+    assert av1_panel.mode.currentIndex() == 0  # Manual CRF
+    assert not av1_panel.fgs_enabled.isChecked()
+    assert av1_panel.preset.value() == 8
+    assert av1_panel.tune.currentIndex() == 0  # Visual Quality (0)
+    assert not av1_panel.fgs_denoise.isChecked()
+
+    # Verify common settings and fps were NOT touched
+    assert av1_panel.fps.currentText() == "60"
+    assert av1_panel.threads.value() == 16
+    assert av1_panel.gop.value() == 50
+    assert av1_panel.export_frames.isChecked()
+    assert av1_panel.frame_quality.value() == 95
+
+    # Builtin preset cannot be renamed or deleted
+    assert preset_menu_texts(window) == ["Save current settings as a preset"]
+
+    # Apply "Good gradients on Android with Embedded Grain"
+    idx_grain = window.preset_combo.findText("Good gradients on Android with Embedded Grain")
+    window.preset_combo.setCurrentIndex(idx_grain)
+
+    assert window.active_panel().codec == "av1"
+    assert av1_panel.crf.value() == 8
+    assert av1_panel.mode.currentIndex() == 0
+    assert av1_panel.fgs_enabled.isChecked()
+    assert av1_panel.fgs_level.value() == 4
+    assert av1_panel.preset.value() == 8
+    assert av1_panel.tune.currentIndex() == 0
+    assert not av1_panel.fgs_denoise.isChecked()
+
+    # Common settings and fps still untouched
+    assert av1_panel.fps.currentText() == "60"
+    assert av1_panel.threads.value() == 16
+    assert av1_panel.gop.value() == 50
+    assert av1_panel.export_frames.isChecked()
+    assert av1_panel.frame_quality.value() == 95
+    assert preset_menu_texts(window) == ["Save current settings as a preset"]
+
+
+def test_manual_tweak_switches_preset_to_custom(window):
+    idx = window.preset_combo.findText("Good gradients on Android")
+    window.preset_combo.setCurrentIndex(idx)
+    assert window.preset_combo.currentText() == "Good gradients on Android"
+
+    # Changing a standard setting switches combo to "Custom"
+    window.active_panel().crf.setValue(16)
+    assert window.preset_combo.currentText() == "Custom"
+
+    # Changing it back matches the preset again
+    window.active_panel().crf.setValue(8)
+    assert window.preset_combo.currentText() == "Good gradients on Android"
+
+    # Changing a common setting does NOT change preset selection
+    window.active_panel().threads.setValue(24)
+    assert window.preset_combo.currentText() == "Good gradients on Android"
+
+
+def test_save_rename_delete_user_preset(window, monkeypatch):
+    # Setup custom settings on VP9
+    window.vp9_button.click()
+    panel = window.active_panel()
+    panel.crf.setValue(18)
+    panel.bitrate.setValue(1500)
+    panel.tiles.setValue(3)
+
+    # Attempt to save with builtin name -> blocked
+    warnings = []
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Good gradients on Android", True))
+    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, msg: warnings.append((title, msg)))
+    window.save_preset_action.trigger()
+    assert len(warnings) == 1
+    assert "Cannot overwrite built-in preset" in warnings[0][0]
+
+    # Save with valid custom name
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("My VP9 Preset", True))
+    window.save_preset_action.trigger()
+
+    assert window.preset_combo.currentText() == "My VP9 Preset"
+    assert preset_menu_texts(window) == [
+        "Save current settings as a preset", "Rename preset", "Delete preset"]
+    assert "My VP9 Preset" in window.user_presets
+    saved = window.user_presets["My VP9 Preset"]
+    assert saved["codec"] == "vp9"
+    assert saved["crf"] == 18
+    assert saved["bitrate_kbps"] == 1500
+    assert saved["tile_columns"] == 3
+    assert "threads" not in saved
+    assert "gop" not in saved
+    assert "fps" not in saved
+
+    # Rename preset
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("My Renamed Preset", True))
+    window.rename_preset_action.trigger()
+
+    assert window.preset_combo.currentText() == "My Renamed Preset"
+    assert "My VP9 Preset" not in window.user_presets
+    assert "My Renamed Preset" in window.user_presets
+
+    # Delete preset
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window.delete_preset_action.trigger()
+
+    assert window.preset_combo.currentText() == "Custom"
+    assert "My Renamed Preset" not in window.user_presets
+    assert preset_menu_texts(window) == ["Save current settings as a preset"]
+
+
+def test_user_presets_persisted(tmp_path, monkeypatch):
+    settings_file = tmp_path / "settings_presets.ini"
+    prefs = QSettings(str(settings_file), QSettings.Format.IniFormat)
+    win1 = ExportWindow(prefs)
+    win1.vp9_button.click()
+    win1.active_panel().crf.setValue(22)
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Persisted Preset", True))
+    win1.save_preset_action.trigger()
+    assert "Persisted Preset" in win1.user_presets
+    win1.close()
+
+    # Reopen window with same preferences
+    prefs2 = QSettings(str(settings_file), QSettings.Format.IniFormat)
+    win2 = ExportWindow(prefs2)
+    items = [win2.preset_combo.itemText(i) for i in range(win2.preset_combo.count())]
+    assert "Persisted Preset" in items
+    win2.apply_preset("Persisted Preset")
+    assert win2.active_panel().crf.value() == 22
+    assert preset_menu_texts(win2) == [
+        "Save current settings as a preset", "Rename preset", "Delete preset"]
+    win2.close()
