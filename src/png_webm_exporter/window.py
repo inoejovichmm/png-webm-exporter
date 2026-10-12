@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .encoding import BUILTIN_PRESETS, ExportWorker, Settings, extract_poster, file_signature, inspect_movie
+from .encoding import BUILTIN_PRESETS, Settings, extract_poster, file_signature, inspect_movie
+from .worker import ExportWorker
 from .resources import readme_text
 from .sequence import MovieSource, detect_sequence
 from .size_search import megabytes_to_bytes

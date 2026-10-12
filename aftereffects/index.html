@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="utf-8">
+        <title>PNG to WebM</title>
+        <link rel="stylesheet" href="panel.css">
+    </head>
+
+    <body>
+        <section id="comp">
+            <div class="row">
+                <strong id="comp-name">No composition</strong>
+                <button id="refresh" title="Read the active composition again">Refresh</button>
+            </div>
+            <div id="comp-details" class="muted">Select a composition in the Project panel or Timeline.</div>
+            <div id="comp-warning" class="warning" hidden></div>
+        </section>
+
+        <section>
+            <div class="row">
+                <label class="grow">Preset
+                    <select id="preset"></select>
+                </label>
+                <button id="preset-save" title="Save current settings as a preset">Save</button>
+                <button id="preset-rename" title="Rename the selected preset">Rename</button>
+                <button id="preset-delete" title="Delete the selected preset">Delete</button>
+            </div>
+            <div id="ask" class="ask" hidden>
+                <div id="ask-message"></div>
+                <div class="row">
+                    <input id="ask-input" class="grow" type="text">
+                    <button id="ask-ok">OK</button>
+                    <button id="ask-cancel">Cancel</button>
+                </div>
+            </div>
+            <div class="row codecs" role="radiogroup" aria-label="Encoder">
+                <label><input type="radio" name="codec" value="vp9"> VP9</label>
+                <label><input type="radio" name="codec" value="av1"> AV1</label>
+            </div>
+            <div id="fields"></div>
+        </section>
+
+        <section>
+            <label>Output folder
+                <span class="row">
+                    <input id="folder" class="grow" type="text" spellcheck="false">
+                    <button id="browse">Browse</button>
+                </span>
+            </label>
+            <label>File name (.webm)
+                <input id="name" type="text" spellcheck="false">
+            </label>
+            <div id="frame-names">
+                <label>First frame name (.webp)
+                    <input id="first-name" type="text" spellcheck="false">
+                </label>
+                <label>Last frame name (.webp)
+                    <input id="last-name" type="text" spellcheck="false">
+                </label>
+            </div>
+        </section>
+
+        <section>
+            <div class="row">
+                <button id="export" class="primary grow">Export WebM</button>
+                <button id="cancel" disabled>Cancel</button>
+            </div>
+            <div id="phase" class="phase">Ready</div>
+            <progress id="progress" max="100" value="0"></progress>
+            <div id="details" class="muted"></div>
+            <div class="row">
+                <button id="reveal" hidden>Show in folder</button>
+            </div>
+            <details>
+                <summary>Log</summary>
+                <pre id="log">No export yet.</pre>
+            </details>
+        </section>
+
+        <script src="panel.js"></script>
+    </body>
+
+</html>

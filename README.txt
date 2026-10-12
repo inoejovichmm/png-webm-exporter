@@ -44,6 +44,31 @@ Temporary candidates are on the output volume; leave space for two encodes plus
 the existing destination. Cancel/error leaves the destination unchanged. A
 successful file is checked with ffprobe before atomic replacement.
 
+After Effects panel
+-------------------
+The same exporter also ships as an After Effects panel (AE 2020 / 17.0 or newer,
+macOS Apple Silicon and Windows x64). It bundles its own encoder, FFmpeg and
+ffprobe; nothing else needs to be installed. Unzip the download and run
+"Install PNG to WebM" (.command on macOS, .bat on Windows), restart After
+Effects, then open Window > Extensions > PNG to WebM. The installer copies the
+self-signed extension into your user CEP extensions folder; no admin rights,
+Adobe installer or debug mode are needed.
+
+Select a composition and press Export WebM. The panel renders the comp's work
+area through the Render Queue to a temporary RGB PNG sequence (16-bit when the
+project is 16 or 32 bpc, otherwise 8-bit), then encodes it in the background with
+the comp's frame rate and the same settings, presets, target-size search,
+verification and WebP frame export as the desktop app. After Effects stays usable
+while encoding. Cancel stops the encoder; during the render itself, press Stop in
+the Render Queue. Other queued Render Queue items are left untouched. Temporary
+frames are deleted afterwards. Use even comp dimensions and an SDR sRGB/Rec.709
+working space (or none).
+
+If macOS blocks the installer, open System Settings > Privacy & Security and
+choose Open Anyway, or run: bash "<drag the installer here>". If Windows shows
+"Windows protected your PC", choose More info > Run anyway. Copying the zip from
+a shared drive instead of downloading it in a browser avoids both prompts.
+
 Development (Python 3.11+; tested with 3.14.7)
 --------------------------------------------
 macOS:
@@ -64,6 +89,13 @@ Requires Xcode command-line tools, make and pkg-config (brew install pkgconf).
   .venv/bin/python tools/check.py
   .venv/bin/python tools/package.py
 Open dist/PNG to WebM.app. The zip beside it preserves the application bundle.
+For the After Effects panel (needs Rosetta for Adobe's ZXPSignCmd on macOS):
+  .venv/bin/python tools/package.py --target extension
+  .venv/bin/python tools/check.py --extension
+This builds a headless encoder (png-webm-encoder, no Qt) with PyInstaller,
+stages it with aftereffects/ into a ZXP signed by a fresh self-signed
+certificate, and zips it with the install/uninstall scripts. The check installs
+it into a scratch profile and runs a real export with the bundled tools.
 The native encoder targets macOS 13; the final runtime's minimum is also subject
 to the installed Python/Qt wheels. Older macOS versions need a separate test.
 

@@ -15,6 +15,9 @@ dev = ["pytest>=8,<10", "pytest-qt>=4.4,<5", "pyinstaller>=6.12,<7"]
 [project.gui-scripts]
 png-webm-exporter = "png_webm_exporter.__main__:main"
 
+[project.scripts]
+png-webm-encoder = "png_webm_exporter.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

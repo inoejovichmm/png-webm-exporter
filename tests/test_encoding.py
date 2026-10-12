@@ -16,10 +16,10 @@ from png_webm_exporter.encoding import (
     inspect_frames,
     inspect_movie,
     verify_probe,
-    ExportWorker,
     file_signature,
 )
 from png_webm_exporter.sequence import MovieSource, detect_sequence
+from png_webm_exporter.worker import ExportWorker
 
 
 @pytest.fixture

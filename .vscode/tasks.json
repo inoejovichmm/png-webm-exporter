@@ -61,6 +61,27 @@
 			"command": ".venv/bin/python tools/package.py && open \"dist/PNG to WebM.app\"",
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "Package After Effects extension",
+			"type": "shell",
+			"command": ".venv/bin/python tools/package.py --target extension",
+			"windows": {
+				"command": ".venv\\Scripts\\python tools/package.py --target extension"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Smoke test After Effects extension",
+			"type": "shell",
+			"command": ".venv/bin/python tools/check.py --extension",
+			"windows": {
+				"command": ".venv\\Scripts\\python tools/check.py --extension"
+			},
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

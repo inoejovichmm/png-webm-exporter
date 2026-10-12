@@ -12,7 +12,6 @@ import threading
 import time
 
 from PIL import Image, ImageCms
-from PySide6.QtCore import QThread, Signal
 
 from .resources import binary_path
 from .sequence import Sequence, MovieSource, clean_stem, detect_sequence
@@ -351,36 +350,24 @@ def verify_probe(data: dict, sequence: Sequence | MovieSource, settings: Setting
         raise ValueError("Output frame rate does not match the settings.")
 
 
-class ExportWorker(QThread):
-    update = Signal(dict)
-    succeeded = Signal(dict)
-    failed = Signal(str)
-    canceled = Signal()
-    ready = Signal(str, dict)
+class ExportJob:
+    """Runs one export. `confirm(message, result)` blocks and returns whether to replace a changed destination."""
 
     def __init__(self, source: Sequence | MovieSource, settings: Settings, destination: Path,
-                 signature, frame_paths: dict[str, Path] | None = None, parent=None):
-        super().__init__(parent)
+                 signature, frame_paths: dict[str, Path] | None = None, on_progress=None, confirm=None):
         self.source = source
         self.settings = settings
         self.destination = destination.absolute()
         self.signature = signature
         self.frame_paths = frame_paths or {}
+        self.on_progress = on_progress or (lambda event: None)
+        self.confirm = confirm or (lambda message, result: False)
         self.stop = threading.Event()
-        self.decision = threading.Event()
-        self.approved = False
         self.log: list[str] = []
         self.owned: set[Path] = set()
 
     def cancel(self) -> None:
         self.stop.set()
-        self.decision.set()
-
-    def approve(self, approved: bool) -> None:
-        self.approved = approved
-        if approved:
-            self.signature = file_signature(self.destination)
-        self.decision.set()
 
     def execute(self, program: Path, arguments: list[str], on_line=None) -> str:
         if self.stop.is_set():
@@ -448,28 +435,24 @@ class ExportWorker(QThread):
                 raise RuntimeError(f"{program.name} exited with code {code}.\n" + "\n".join(self.log[-15:]))
             return "\n".join(output)
 
-    def run(self) -> None:
+    def run(self) -> dict:
         try:
-            self.perform()
-        except Canceled:
-            self.canceled.emit()
-        except Exception as error:
-            self.failed.emit(str(error))
+            return self.perform()
         finally:
             for path in self.owned:
                 path.unlink(missing_ok=True)
 
-    def perform(self) -> None:
+    def perform(self) -> dict:
         self.settings.validate()
         if isinstance(self.source, MovieSource):
-            self.update.emit({"phase": "Validating QuickTime PNG movie", "percent": -1})
+            self.on_progress({"phase": "Validating QuickTime PNG movie", "percent": -1})
             source = inspect_movie(self.source.path)
             dimensions = (source.width, source.height, source.depth)
         else:
             source = detect_sequence(list(self.source.files))
-            self.update.emit({"phase": "Validating PNG frames", "percent": 0})
+            self.on_progress({"phase": "Validating PNG frames", "percent": 0})
             dimensions = inspect_frames(source, self.stop, lambda done, total:
-                                        self.update.emit({"phase": "Validating PNG frames", "percent": done * 100 // total}))
+                                        self.on_progress({"phase": "Validating PNG frames", "percent": done * 100 // total}))
         if self.destination.suffix.lower() != ".webm":
             raise ValueError("Choose an output filename ending in .webm.")
         if not self.destination.parent.is_dir():
@@ -500,14 +483,14 @@ class ExportWorker(QThread):
             candidate = Path(name)
             self.owned.add(candidate)
             label = f"Trial {trial} - CRF {current_crf}" if search else f"Encoding - CRF {current_crf}"
-            self.update.emit({"phase": label, "percent": 0})
+            self.on_progress({"phase": label, "percent": 0})
 
             def progress(line):
                 key, separator, value = line.partition("=")
                 if separator and key == "frame" and value.strip().isdigit():
                     frame = int(value)
                     size = candidate.stat().st_size
-                    self.update.emit({"phase": label, "percent": min(99, frame * 100 // source.count),
+                    self.on_progress({"phase": label, "percent": min(99, frame * 100 // source.count),
                                       "elapsed": time.monotonic() - started, "size": size,
                                       "best_size": best_path.stat().st_size if best_path else None})
                     return search is not None and current_crf < 63 and size > search.budget
@@ -540,7 +523,7 @@ class ExportWorker(QThread):
                 self.owned.discard(candidate)
         if best_path is None:
             raise ValueError("FFmpeg did not produce a usable output.")
-        self.update.emit({"phase": "Verifying complete output", "percent": -1})
+        self.on_progress({"phase": "Verifying complete output", "percent": -1})
         data = self.execute(ffprobe, ["-v", "error", "-count_frames", "-show_streams",
                                       "-show_format", "-of", "json", str(best_path)])
         verify_probe(json.loads(data), source, self.settings, dimensions)
@@ -549,11 +532,10 @@ class ExportWorker(QThread):
                   "trials": trial, "frames": source.count, "duration": float(source.count / rate)}
         result["target_met"] = not search or result["size"] <= search.budget
         if file_signature(self.destination) != self.signature:
-            self.update.emit({"phase": "Awaiting overwrite confirmation", "percent": -1})
-            self.ready.emit("The destination changed during export. Replace it with the verified result?", result)
-            self.decision.wait()
-            if not self.approved:
+            self.on_progress({"phase": "Awaiting overwrite confirmation", "percent": -1})
+            if not self.confirm("The destination changed during export. Replace it with the verified result?", result):
                 raise Canceled
+            self.signature = file_signature(self.destination)
         if self.stop.is_set():
             raise Canceled
         if file_signature(self.destination) != self.signature:
@@ -562,7 +544,7 @@ class ExportWorker(QThread):
         self.owned.discard(best_path)
         if self.settings.export_frames:
             result["frame_files"] = self.export_boundary_frames(ffmpeg, source.count)
-        self.succeeded.emit(result)
+        return result
 
     def export_boundary_frames(self, ffmpeg: Path, frame_count: int) -> list[str]:
         quality = self.settings.frame_quality
@@ -572,7 +554,7 @@ class ExportWorker(QThread):
         for position, index in exports.items():
             if self.stop.is_set():
                 raise Canceled
-            self.update.emit({"phase": f"Exporting {position} frame as WebP ({mode})", "percent": -1})
+            self.on_progress({"phase": f"Exporting {position} frame as WebP ({mode})", "percent": -1})
             target = self.frame_paths.get(position, self.destination.with_name(f"{self.destination.stem}_{position}.webp")).absolute()
             args = build_frame_args(self.destination, target, quality, index)
             self.log.append(json.dumps([str(ffmpeg), *args]))

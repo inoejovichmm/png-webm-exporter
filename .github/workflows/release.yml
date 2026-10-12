@@ -1,4 +1,4 @@
-name: Desktop build and release
+name: Desktop and After Effects build and release
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
       - "src/**"
       - "tests/**"
       - "tools/**"
+      - "aftereffects/**"
       - "requirements-build.txt"
       - "pyproject.toml"
       - ".github/workflows/release.yml"
@@ -17,7 +18,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -75,17 +76,23 @@ jobs:
         run: python tools/package.py
       - name: Smoke test frozen executable
         run: python tools/check.py --frozen
+      - name: Package After Effects extension
+        run: python tools/package.py --target extension
+      - name: Install and smoke test After Effects extension
+        run: python tools/check.py --extension
       - uses: actions/upload-artifact@v7
         with:
           name: PNG-to-WebM-windows-x64-unsigned
           path: |
             dist/PNG-to-WebM-windows-x64.exe
             dist/PNG-to-WebM-windows-x64.exe.sha256
+            dist/PNG-to-WebM-AE-windows-x64.zip
+            dist/PNG-to-WebM-AE-windows-x64.zip.sha256
           if-no-files-found: error
 
   macos:
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -117,12 +124,20 @@ jobs:
         run: python tools/package.py
       - name: Smoke test frozen app
         run: python tools/check.py --frozen
+      - name: Ensure Rosetta for Adobe's x86_64 ZXPSignCmd
+        run: /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+      - name: Package After Effects extension
+        run: python tools/package.py --target extension
+      - name: Install and smoke test After Effects extension
+        run: python tools/check.py --extension
       - uses: actions/upload-artifact@v7
         with:
           name: PNG-to-WebM-macos-arm64-unsigned
           path: |
             dist/PNG-to-WebM-macos-arm64.zip
             dist/PNG-to-WebM-macos-arm64.zip.sha256
+            dist/PNG-to-WebM-AE-macos-arm64.zip
+            dist/PNG-to-WebM-AE-macos-arm64.zip.sha256
           if-no-files-found: error
 
   release:
@@ -157,6 +172,10 @@ jobs:
           dist/PNG-to-WebM-windows-x64.exe.sha256
           dist/PNG-to-WebM-macos-arm64.zip
           dist/PNG-to-WebM-macos-arm64.zip.sha256
+          dist/PNG-to-WebM-AE-windows-x64.zip
+          dist/PNG-to-WebM-AE-windows-x64.zip.sha256
+          dist/PNG-to-WebM-AE-macos-arm64.zip
+          dist/PNG-to-WebM-AE-macos-arm64.zip.sha256
           --repo "${{ github.repository }}"
           --target "${{ github.sha }}"
           --title "${{ steps.version.outputs.tag }}"
