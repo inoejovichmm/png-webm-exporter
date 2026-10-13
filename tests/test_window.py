@@ -107,7 +107,7 @@ def test_webp_frame_controls_are_common(window):
     common_form = common.layout()
     export_frames_label = common_form.labelForField(panel.export_frames)
     assert export_frames_label.text() == "Export first and last frames (WebP)"
-    assert not export_frames_label.wordWrap()
+    assert export_frames_label.wordWrap()
     assert common.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
     assert common_form.labelForField(panel.frame_quality) is panel.frame_quality_label
     assert panel.delivery_form.labelForField(panel.export_frames) is None
