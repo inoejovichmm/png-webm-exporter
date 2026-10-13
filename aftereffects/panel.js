@@ -5,52 +5,88 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const STORAGE = {codec: "pwe.codec", settings: "pwe.settings", presets: "pwe.presets", folder: "pwe.folder"};
+const STORAGE = { codec: "pwe.codec", settings: "pwe.settings", presets: "pwe.presets", folder: "pwe.folder" };
 const STANDARD_KEYS = {
   vp9: ["bitrate_kbps", "auto_alt_ref", "arnr_maxframes", "aq_mode", "row_mt", "tile_columns"],
   av1: ["preset", "tune", "fgs_enabled", "fgs_level", "fgs_denoise"],
 };
 const FIELDS = [
-  {key: "mode", label: "Quality mode", type: "select", options: [["crf", "Manual CRF"], ["target", "Target size"]],
-   help: "Target size tries complete encodes and keeps the lowest tested CRF that fits. It changes only CRF and forces bitrate to zero."},
-  {key: "crf", label: (state) => state.mode === "target" ? "Initial CRF" : "CRF", type: "int",
-   min: (codec) => codec === "av1" ? 1 : 0, max: 63,
-   help: "Constant rate factor: lower is higher quality and larger. In target mode this is only the first trial."},
-  {key: "target_mb", label: "Target size (MB)", type: "text", visible: (state) => state.mode === "target",
-   help: "Hard cap in decimal megabytes: 1 MB = 1,000,000 bytes, including WebM overhead. If impossible, the smallest tested video is delivered."},
-  {key: "full_range", label: "Output range", type: "select", options: [[true, "Full (0-255)"], [false, "Limited (16-235)"]],
-   help: "Controls RGB-to-YUV conversion and range metadata together. Both use a Rec.709 matrix and tags."},
-  {key: "fgs_enabled", codec: "av1", label: "Film grain synthesis", type: "bool",
-   help: "The AV1 decoder regenerates fine grain at playback, breaking up 8-bit banding while keeping the encode small."},
-  {key: "fgs_level", codec: "av1", label: "Film grain level", type: "int", min: 0, max: 50,
-   enabled: (state) => state.fgs_enabled, help: "Strength of the synthesized grain, 0-50. Zero disables synthesis."},
-  {key: "bitrate_kbps", codec: "vp9", label: "Bitrate (kb/s, 0 = constant quality)", type: "int", min: 0, max: 1000000,
-   enabled: (state) => state.mode !== "target", help: "A nonzero bitrate constrains quality; it is not an exact size cap. Target size always uses zero."},
-  {key: "auto_alt_ref", codec: "vp9", label: "Alternate reference frames", type: "bool",
-   help: "Hidden alternate reference frames can improve compression but temporal filtering can change fine grain."},
-  {key: "arnr_maxframes", codec: "vp9", label: "Temporal filter frames", type: "int", min: 0, max: 15,
-   help: "Alternate-reference temporal filtering window, 0-15 frames. Zero disables filtering."},
-  {key: "aq_mode", codec: "vp9", label: "Adaptive quantization", type: "select",
-   options: [[0, "0 - Off"], [1, "1 - Variance"], [2, "2 - Complexity"], [3, "3 - Cyclic refresh"], [4, "4 - Equator360"]],
-   help: "Redistributes quantization across the image. Other modes can change gradients and grain."},
-  {key: "row_mt", codec: "vp9", label: "Row multithreading", type: "bool", help: "Parallel row encoding."},
-  {key: "tile_columns", codec: "vp9", label: "Tile columns (log2)", type: "int", min: 0, max: 6,
-   help: "0 = 1, 1 = 2, 2 = 4 tile columns. libvpx limits this according to frame width."},
-  {key: "preset", codec: "av1", label: "Encoder preset", type: "int", min: 0, max: 13,
-   help: "SVT-AV1 speed/quality preset, 0 (slowest, smallest) to 13 (fastest)."},
-  {key: "tune", codec: "av1", label: "Visual tuning", type: "select",
-   options: [[0, "0 - Visual quality (VQ)"], [1, "1 - PSNR"], [2, "2 - SSIM"]],
-   help: "VQ prioritizes perceptual quality; SSIM can suit smooth gradients."},
-  {key: "fgs_denoise", codec: "av1", label: "Film grain denoise source", type: "bool", enabled: (state) => state.fgs_enabled,
-   help: "Denoise the source before analyzing grain. Leave off for clean renders."},
-  {key: "threads", label: "Threads (0 = auto)", type: "int", min: 0, max: 256,
-   help: "Maximum encoder threads. Zero lets the encoder choose."},
-  {key: "gop", label: "Max keyframe distance (0 = auto)", type: "int", min: 0, max: 1000000,
-   help: "Maximum frames between keyframes. Shorter distances improve seeking but can increase size."},
-  {key: "export_frames", label: "Export first and last frames (WebP)", type: "bool",
-   help: "After the WebM is verified, also save its first and last frames as WebP next to it."},
-  {key: "frame_quality", label: "Frame WebP quality (100 = lossless)", type: "int", min: 0, max: 100,
-   enabled: (state) => state.export_frames, help: "libwebp quality from 0 (smallest) to 100 (lossless)."},
+  {
+    key: "mode", label: "Quality mode", type: "select", options: [["crf", "Manual CRF"], ["target", "Target size"]],
+    help: "Target size tries complete encodes and keeps the lowest tested CRF that fits. It changes only CRF and forces bitrate to zero."
+  },
+  {
+    key: "crf", label: (state) => state.mode === "target" ? "Initial CRF" : "CRF", type: "int",
+    min: (codec) => codec === "av1" ? 1 : 0, max: 63,
+    help: "Constant rate factor: lower is higher quality and larger. In target mode this is only the first trial."
+  },
+  {
+    key: "target_mb", label: "Target size (MB)", type: "text", visible: (state) => state.mode === "target",
+    help: "Hard cap in decimal megabytes: 1 MB = 1,000,000 bytes, including WebM overhead. If impossible, the smallest tested video is delivered."
+  },
+  {
+    key: "full_range", label: "Output range", type: "select", options: [[true, "Full (0-255)"], [false, "Limited (16-235)"]],
+    help: "Controls RGB-to-YUV conversion and range metadata together. Both use a Rec.709 matrix and tags."
+  },
+  {
+    key: "fgs_enabled", codec: "av1", label: "Film grain synthesis", type: "bool",
+    help: "The AV1 decoder regenerates fine grain at playback, breaking up 8-bit banding while keeping the encode small."
+  },
+  {
+    key: "fgs_level", codec: "av1", label: "Film grain level", type: "int", min: 0, max: 50,
+    enabled: (state) => state.fgs_enabled, help: "Strength of the synthesized grain, 0-50. Zero disables synthesis."
+  },
+  {
+    key: "bitrate_kbps", codec: "vp9", label: "Bitrate (kb/s, 0 = constant quality)", type: "int", min: 0, max: 1000000,
+    enabled: (state) => state.mode !== "target", help: "A nonzero bitrate constrains quality; it is not an exact size cap. Target size always uses zero."
+  },
+  {
+    key: "auto_alt_ref", codec: "vp9", label: "Alternate reference frames", type: "bool",
+    help: "Hidden alternate reference frames can improve compression but temporal filtering can change fine grain."
+  },
+  {
+    key: "arnr_maxframes", codec: "vp9", label: "Temporal filter frames", type: "int", min: 0, max: 15,
+    help: "Alternate-reference temporal filtering window, 0-15 frames. Zero disables filtering."
+  },
+  {
+    key: "aq_mode", codec: "vp9", label: "Adaptive quantization", type: "select",
+    options: [[0, "0 - Off"], [1, "1 - Variance"], [2, "2 - Complexity"], [3, "3 - Cyclic refresh"], [4, "4 - Equator360"]],
+    help: "Redistributes quantization across the image. Other modes can change gradients and grain."
+  },
+  { key: "row_mt", codec: "vp9", label: "Row multithreading", type: "bool", help: "Parallel row encoding." },
+  {
+    key: "tile_columns", codec: "vp9", label: "Tile columns (log2)", type: "int", min: 0, max: 6,
+    help: "0 = 1, 1 = 2, 2 = 4 tile columns. libvpx limits this according to frame width."
+  },
+  {
+    key: "preset", codec: "av1", label: "Encoder preset", type: "int", min: 0, max: 13,
+    help: "SVT-AV1 speed/quality preset, 0 (slowest, smallest) to 13 (fastest)."
+  },
+  {
+    key: "tune", codec: "av1", label: "Visual tuning", type: "select",
+    options: [[0, "0 - Visual quality (VQ)"], [1, "1 - PSNR"], [2, "2 - SSIM"]],
+    help: "VQ prioritizes perceptual quality; SSIM can suit smooth gradients."
+  },
+  {
+    key: "fgs_denoise", codec: "av1", label: "Film grain denoise source", type: "bool", enabled: (state) => state.fgs_enabled,
+    help: "Denoise the source before analyzing grain. Leave off for clean renders."
+  },
+  {
+    key: "threads", label: "Threads (0 = auto)", type: "int", min: 0, max: 256,
+    help: "Maximum encoder threads. Zero lets the encoder choose."
+  },
+  {
+    key: "gop", label: "Max keyframe distance (0 = auto)", type: "int", min: 0, max: 1000000,
+    help: "Maximum frames between keyframes. Shorter distances improve seeking but can increase size."
+  },
+  {
+    key: "export_frames", label: "Export first and last frames (WebP)", type: "bool",
+    help: "After the WebM is verified, also save its first and last frames as WebP next to it."
+  },
+  {
+    key: "frame_quality", label: "Frame WebP quality (100 = lossless)", type: "int", min: 0, max: 100,
+    enabled: (state) => state.export_frames, help: "libwebp quality from 0 (smallest) to 100 (lossless)."
+  },
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -89,7 +125,7 @@ function evalHost(script) {
     try {
       resolve(JSON.parse(raw));
     } catch (error) {
-      resolve({ok: false, message: `After Effects returned: ${raw}`});
+      resolve({ ok: false, message: `After Effects returned: ${raw}` });
     }
   }));
 }
@@ -116,7 +152,7 @@ function fpsText(rate) {
 }
 
 function initialState(codecName) {
-  return Object.assign({}, defaults[codecName], {mode: "crf", target_mb: "10"});
+  return Object.assign({}, defaults[codecName], { mode: "crf", target_mb: "10" });
 }
 
 function saveState() {
@@ -126,8 +162,10 @@ function saveState() {
 
 function standardSettings() {
   const state = states[codec];
-  const data = {codec, crf: state.crf, full_range: state.full_range,
-                target_bytes: state.mode === "target" ? megabytesToBytes(state.target_mb) : null};
+  const data = {
+    codec, crf: state.crf, full_range: state.full_range,
+    target_bytes: state.mode === "target" ? megabytesToBytes(state.target_mb) : null
+  };
   for (const key of STANDARD_KEYS[codec]) {
     data[key] = state[key];
   }
@@ -422,13 +460,13 @@ function runEncoder(args, onEvent) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = childProcess.spawn(encoderPath(), args, {windowsHide: true});
+      child = childProcess.spawn(encoderPath(), args, { windowsHide: true });
     } catch (error) {
-      resolve({code: -1, message: error.message});
+      resolve({ code: -1, message: error.message });
       return;
     }
     encoder = child;
-    child.stdin.on("error", () => {});
+    child.stdin.on("error", () => { });
     let buffer = "";
     let stderr = "";
     let outcome = {};
@@ -459,13 +497,13 @@ function runEncoder(args, onEvent) {
       stderr += chunk;
     });
     child.on("error", (error) => {
-      outcome.error = outcome.error || {message: `Could not start the bundled encoder: ${error.message}`};
+      outcome.error = outcome.error || { message: `Could not start the bundled encoder: ${error.message}` };
       encoder = null;
-      resolve(Object.assign({code: -1, stderr}, outcome));
+      resolve(Object.assign({ code: -1, stderr }, outcome));
     });
     child.on("close", (code) => {
       encoder = null;
-      resolve(Object.assign({code, stderr}, outcome));
+      resolve(Object.assign({ code, stderr }, outcome));
     });
   });
 }
@@ -509,7 +547,7 @@ async function exportWebm() {
     destination = path.join(folder, fileName($("name").value, "output file name", ".webm"));
     if (state.export_frames) {
       frameArgs = ["--first-frame", path.join(folder, fileName($("first-name").value, "first frame file name", ".webp")),
-                   "--last-frame", path.join(folder, fileName($("last-name").value, "last frame file name", ".webp"))];
+        "--last-frame", path.join(folder, fileName($("last-name").value, "last frame file name", ".webp"))];
     }
     localStorage.setItem(STORAGE.folder, folder);
   } catch (error) {
@@ -523,7 +561,7 @@ async function exportWebm() {
     }
     args.push("--overwrite");
   }
-  const settings = {fps: fpsText(comp.frameRate), codec, target_bytes: null};
+  const settings = { fps: fpsText(comp.frameRate), codec, target_bytes: null };
   for (const key of Object.keys(defaults[codec])) {
     if (!(key in settings)) {
       settings[key] = state[key];
@@ -540,8 +578,7 @@ async function exportWebm() {
   $("log").textContent = "";
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "png-webm-ae-"));
   try {
-    const sixteen = comp.bitsPerChannel >= 16;
-    const render = await evalHost(`pweRender(${JSON.stringify(temp.replace(/\\/g, "/"))}, ${sixteen})`);
+    const render = await evalHost(`pweRender(${JSON.stringify(temp.replace(/\\/g, "/"))})`);
     if (!render.ok) {
       throw new Error(render.message);
     }
@@ -559,7 +596,7 @@ async function exportWebm() {
       lastOutput = done.path;
       showPhase(done.target_met ? "Export complete and verified" : "Export complete; target exceeded");
       let detail = `${(done.size / 1e6).toFixed(3)} MB (${done.size.toLocaleString()} bytes) | CRF ${done.crf} | ` +
-                   `${done.trials} trial(s) | ${done.frames} frames`;
+        `${done.trials} trial(s) | ${done.frames} frames`;
       if (done.frame_files) {
         detail += ` | WebP frames: ${done.frame_files.map((file) => path.basename(file)).join(", ")}`;
       }
@@ -602,9 +639,9 @@ function reveal() {
     return;
   }
   if (process.platform === "win32") {
-    childProcess.spawn("explorer.exe", [`/select,${lastOutput}`], {detached: true});
+    childProcess.spawn("explorer.exe", [`/select,${lastOutput}`], { detached: true });
   } else {
-    childProcess.spawn("open", ["-R", lastOutput], {detached: true});
+    childProcess.spawn("open", ["-R", lastOutput], { detached: true });
   }
 }
 

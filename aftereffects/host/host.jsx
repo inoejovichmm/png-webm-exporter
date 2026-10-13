@@ -70,36 +70,49 @@ function pweSetting(item, key) {
     }
 }
 
-function pweTrySettings(item, settings) {
-    // setSettings invalidates the OutputModule object, so always fetch it again.
-    try {
-        item.outputModule(1).setSettings(settings);
-    } catch (ignored) { }
+function pwePngTemplateScore(item, maximumDepth) {
+    var settings = item.outputModule(1).getSettings(GetSettingsFormat.STRING);
+    if (settings["Format"] !== "PNG Sequence") {
+        return -1;
+    }
+    var depth = /Trillions of Colors/.test(settings["Depth"] || "") ? 16 :
+        (/Millions of Colors/.test(settings["Depth"] || "") ? 8 : 0);
+    if (!depth || depth > maximumDepth) {
+        return -1;
+    }
+    return (settings["Channels"] === "RGB" ? 100 : 0) + depth;
 }
 
 function pweUsePngSequence(item) {
-    pweTrySettings(item, { "Format": "PNG Sequence" });
-    if (pweSetting(item, "Format") === "PNG Sequence") {
-        return true;
-    }
+    var maximumDepth = app.project.bitsPerChannel >= 16 ? 16 : 8;
     var templates = item.outputModule(1).templates;
+    var bestTemplate = null;
+    var bestScore = -1;
     for (var index = 0; index < templates.length; index++) {
         try {
             item.outputModule(1).applyTemplate(templates[index]);
         } catch (ignored) {
             continue;
         }
-        if (pweSetting(item, "Format") === "PNG Sequence") {
-            return true;
+        var score = pwePngTemplateScore(item, maximumDepth);
+        if (score > bestScore) {
+            bestScore = score;
+            bestTemplate = templates[index];
         }
     }
-    return false;
+    if (bestTemplate === null) {
+        return false;
+    }
+    item.outputModule(1).applyTemplate(bestTemplate);
+    return pwePngTemplateScore(item, maximumDepth) >= 0;
 }
 
-function pweRender(folder, sixteenBit) {
+function pweRender(folder) {
     var queue = app.project.renderQueue;
     var paused = [];
     var item = null;
+    var renderComp = null;
+    var matteSource = null;
     try {
         var comp = pweActiveComp();
         if (queue.rendering) {
@@ -111,17 +124,18 @@ function pweRender(folder, sixteenBit) {
                 paused.push(queue.item(index));
             }
         }
-        item = queue.items.add(comp);
+        renderComp = comp.duplicate();
+        var matte = renderComp.layers.addSolid(comp.bgColor, "PNG WebM Matte", comp.width, comp.height,
+            comp.pixelAspect, comp.duration);
+        matteSource = matte.source;
+        matte.moveToEnd();
+        item = queue.items.add(renderComp);
         item.timeSpanStart = comp.workAreaStart;
         item.timeSpanDuration = comp.workAreaDuration;
         if (!pweUsePngSequence(item)) {
-            throw new Error("After Effects did not allow selecting PNG Sequence from a script. Create an Output " +
-                "Module template with Format: PNG Sequence (Edit > Templates > Output Module) and retry.");
+            throw new Error("No PNG Sequence Output Module template has a depth supported by this project. Create " +
+                "one with Format: PNG Sequence and matching color depth (Edit > Templates > Output Module).");
         }
-        pweTrySettings(item, { "Video Output": true });
-        pweTrySettings(item, { "Channels": "RGB" });
-        pweTrySettings(item, { "Depth": sixteenBit ? "Trillions of Colors" : "Millions of Colors" });
-        pweTrySettings(item, { "Output Audio": "Off" });
         item.outputModule(1).postRenderAction = PostRenderAction.NONE;
         item.outputModule(1).file = new File(folder + "/frame_[#####].png");
         queue.render();
@@ -135,6 +149,16 @@ function pweRender(folder, sixteenBit) {
         if (item !== null) {
             try {
                 item.remove();
+            } catch (ignored) { }
+        }
+        if (renderComp !== null) {
+            try {
+                renderComp.remove();
+            } catch (ignored) { }
+        }
+        if (matteSource !== null) {
+            try {
+                matteSource.remove();
             } catch (ignored) { }
         }
         for (var restore = 0; restore < paused.length; restore++) {

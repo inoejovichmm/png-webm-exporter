@@ -193,8 +193,9 @@ def inspect_frames(sequence: Sequence, canceled: threading.Event, progress) -> t
             image.verify()
         with Image.open(path) as image:
             image.load()
-            if color == 6 and (depth == 16 or image.getchannel("A").getextrema() != (255, 255)):
-                raise ValueError(f"Flatten transparency in AE and export RGB PNGs: {path.name}. 16-bit RGBA is not accepted.")
+            if color == 6 and image.getchannel("A").getextrema() != (255, 255):
+                raise ValueError(f"Flatten transparency in AE and export RGB PNGs: {path.name}. "
+                                 "The alpha channel contains transparency.")
             if "transparency" in image.info:
                 raise ValueError(f"Remove PNG transparency before export: {path.name}")
             icc_profile = image.info.get("icc_profile")

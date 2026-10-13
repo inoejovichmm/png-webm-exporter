@@ -1,9 +1,12 @@
 from pathlib import Path
+import binascii
 import json
 import shutil
+import struct
 import subprocess
 import sys
 import threading
+import zlib
 
 from PIL import Image, ImageCms
 import pytest
@@ -162,6 +165,29 @@ def test_transparency_rejected(tmp_path):
     Image.new("RGBA", (32, 32), (20, 30, 40, 128)).save(path)
     with pytest.raises(ValueError, match="transparency"):
         inspect_frames(detect_sequence([path]), threading.Event(), lambda *_: None)
+
+
+@pytest.mark.parametrize("alpha, accepted", [(65535, True), (32768, False)])
+def test_16bit_rgba_alpha_validation(tmp_path, alpha, accepted):
+    path = tmp_path / "frame.png"
+    width = height = 32
+    pixel = struct.pack(">HHHH", 12000, 20000, 32000, alpha)
+    scanline = b"\x00" + pixel * width
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data +
+                struct.pack(">I", binascii.crc32(kind + data) & 0xffffffff))
+
+    png = (b"\x89PNG\r\n\x1a\n" +
+           chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 16, 6, 0, 0, 0)) +
+           chunk(b"IDAT", zlib.compress(scanline * height)) + chunk(b"IEND", b""))
+    path.write_bytes(png)
+
+    if accepted:
+        assert inspect_frames(detect_sequence([path]), threading.Event(), lambda *_: None) == (32, 32, 16)
+    else:
+        with pytest.raises(ValueError, match="alpha channel contains transparency"):
+            inspect_frames(detect_sequence([path]), threading.Event(), lambda *_: None)
 
 
 def test_png_non_srgb_icc_rejected(tmp_path):
