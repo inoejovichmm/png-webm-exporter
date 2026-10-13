@@ -97,9 +97,11 @@ let codec = localStorage.getItem(STORAGE.codec) === "av1" ? "av1" : "vp9";
 let states = null;
 let comp = null;
 let encoder = null;
+let nativeRenderActive = false;
 let busy = false;
 let cancelRequested = false;
 let lastOutput = null;
+let finishActiveAsk = null;
 
 function load(key, fallback) {
   try {
@@ -125,7 +127,7 @@ function evalHost(script) {
     try {
       resolve(JSON.parse(raw));
     } catch (error) {
-      resolve({ ok: false, message: `After Effects returned: ${raw}` });
+      resolve({ ok: false, message: `After Effects returned an invalid script response: ${raw || "(no response)"}` });
     }
   }));
 }
@@ -296,26 +298,43 @@ function applyPreset(name) {
 }
 
 function ask(message, initial) {
+  const previousFocus = document.activeElement;
   const input = $("ask-input");
+  const overlay = $("ask");
+  const dialog = $("ask-dialog");
   $("ask-message").textContent = message;
   input.hidden = initial === undefined;
   input.value = initial || "";
-  $("ask").hidden = false;
+  overlay.hidden = false;
   if (!input.hidden) {
     input.focus();
     input.select();
+  } else {
+    dialog.focus();
   }
   return new Promise((resolve) => {
     const finish = (answer) => {
-      $("ask").hidden = true;
-      $("ask-ok").onclick = $("ask-cancel").onclick = input.onkeydown = null;
+      overlay.hidden = true;
+      overlay.onclick = overlay.onkeydown = $("ask-ok").onclick = $("ask-cancel").onclick = null;
+      finishActiveAsk = null;
+      if (previousFocus && previousFocus.focus) {
+        previousFocus.focus();
+      }
       resolve(answer);
     };
+    finishActiveAsk = finish;
     $("ask-ok").onclick = () => finish(input.hidden ? true : input.value.trim());
     $("ask-cancel").onclick = () => finish(null);
-    input.onkeydown = (event) => {
+    overlay.onclick = (event) => {
+      if (event.target === overlay) {
+        finish(null);
+      }
+    };
+    overlay.onkeydown = (event) => {
       if (event.key === "Enter") {
-        $("ask-ok").onclick();
+        if (document.activeElement === input) {
+          $("ask-ok").onclick();
+        }
       } else if (event.key === "Escape") {
         finish(null);
       }
@@ -510,7 +529,7 @@ function runEncoder(args, onEvent) {
 
 function showProgress(event) {
   showPhase(event.phase);
-  setProgress(event.percent);
+  setProgress(event.percent < 0 ? 98 : 65 + event.percent * 0.34);
   if ("elapsed" in event) {
     let detail = `${event.elapsed.toFixed(0)} s elapsed | Current trial: ${(event.size / 1e6).toFixed(3)} MB`;
     if (event.best_size !== null && event.best_size !== undefined) {
@@ -522,18 +541,34 @@ function showProgress(event) {
 
 async function exportWebm() {
   if (busy) {
+    showPhase("An export is already in progress.");
     return;
   }
+  if (!states || !defaults) {
+    showPhase("Export settings are still initializing. Try again in a moment.", true);
+    return;
+  }
+  cancelRequested = false;
+  setBusy(true);
+  showPhase("Preparing export...");
+  setProgress(0);
   $("reveal").hidden = true;
   $("details").textContent = "";
-  let destination;
-  let frameArgs = [];
-  const state = states[codec];
+  let temp = null;
+  let renderPrepared = false;
   try {
+    const state = states[codec];
+    showPhase("Preparing export: checking composition...");
+    setProgress(5);
     const info = await refreshComp();
+    if (cancelRequested) {
+      showPhase("Canceled; destination unchanged");
+      return;
+    }
     if (!info) {
       throw new Error("Select a composition in the Project panel or Timeline first.");
     }
+    setProgress(12);
     if (info.width % 2 || info.height % 2) {
       throw new Error(`Use even composition dimensions: ${info.width} x ${info.height}.`);
     }
@@ -544,49 +579,113 @@ async function exportWebm() {
     if (!folder || !fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) {
       throw new Error("Choose an existing output folder.");
     }
-    destination = path.join(folder, fileName($("name").value, "output file name", ".webm"));
+    const destination = path.join(folder, fileName($("name").value, "output file name", ".webm"));
+    let frameArgs = [];
     if (state.export_frames) {
       frameArgs = ["--first-frame", path.join(folder, fileName($("first-name").value, "first frame file name", ".webp")),
         "--last-frame", path.join(folder, fileName($("last-name").value, "last frame file name", ".webp"))];
     }
     localStorage.setItem(STORAGE.folder, folder);
-  } catch (error) {
-    showPhase(error.message, true);
-    return;
-  }
-  const args = ["encode", "--output", destination, "--control-stdin", ...frameArgs];
-  if (fs.existsSync(destination)) {
-    if (await ask(`Replace ${path.basename(destination)} after a successful export?`) !== true) {
+    setProgress(20);
+    if (cancelRequested) {
+      showPhase("Canceled; destination unchanged");
       return;
     }
-    args.push("--overwrite");
-  }
-  const settings = { fps: fpsText(comp.frameRate), codec, target_bytes: null };
-  for (const key of Object.keys(defaults[codec])) {
-    if (!(key in settings)) {
-      settings[key] = state[key];
+    const args = ["encode", "--output", destination, "--control-stdin", ...frameArgs];
+    if (fs.existsSync(destination)) {
+      showPhase("Preparing export: confirm replacement...");
+      if (await ask(`Replace ${path.basename(destination)} after a successful export?`) !== true) {
+        if (cancelRequested) {
+          showPhase("Canceled; destination unchanged");
+        }
+        return;
+      }
+      args.push("--overwrite");
     }
-  }
-  args.push("--settings", JSON.stringify(settings));
-  if (state.mode === "target") {
-    args.push("--target-mb", state.target_mb);
-  }
-  cancelRequested = false;
-  setBusy(true);
-  showPhase("Rendering the work area in After Effects...");
-  setProgress(-1);
-  $("log").textContent = "";
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "png-webm-ae-"));
-  try {
-    const render = await evalHost(`pweRender(${JSON.stringify(temp.replace(/\\/g, "/"))})`);
+    if (cancelRequested) {
+      showPhase("Canceled; destination unchanged");
+      return;
+    }
+    const settings = { fps: fpsText(info.frameRate), codec, target_bytes: null };
+    for (const key of Object.keys(defaults[codec])) {
+      if (!(key in settings)) {
+        settings[key] = state[key];
+      }
+    }
+    args.push("--settings", JSON.stringify(settings));
+    if (state.mode === "target") {
+      args.push("--target-mb", state.target_mb);
+    }
+    setProgress(28);
+    temp = fs.mkdtempSync(path.join(os.tmpdir(), "png-webm-ae-"));
+    $("log").textContent = "";
+    showPhase("Preparing export: queueing the composition...");
+    setProgress(35);
+    let render = await evalHost(`pwePrepareRender(${JSON.stringify(temp.replace(/\\/g, "/"))})`);
     if (!render.ok) {
       throw new Error(render.message);
+    }
+    renderPrepared = true;
+    while (render.preparing && !cancelRequested) {
+      showPhase(`Preparing export: ${render.phase}...`);
+      setProgress(35 + render.percent * 0.3);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      render = await evalHost("pweGetRenderStatus()");
+      if (!render.ok) {
+        throw new Error(render.message);
+      }
+    }
+    if (render.canceled) {
+      showPhase("Canceled; destination unchanged");
+      setProgress(0);
+      return;
     }
     if (cancelRequested) {
       showPhase("Canceled; destination unchanged");
       setProgress(0);
       return;
     }
+    if (!render.ready) {
+      throw new Error("After Effects preparation ended without a queued render.");
+    }
+    showPhase("Queued in AE Render Queue. Click Render there; use its Stop button to cancel.");
+    setProgress(35);
+    let renderStatus = await evalHost("pweGetRenderStatus()");
+    while (renderStatus.ok && !renderStatus.renderFinished && !cancelRequested) {
+      if (renderStatus.renderStarted && !nativeRenderActive) {
+        nativeRenderActive = true;
+        $("cancel").disabled = true;
+        showPhase("Rendering in AE Render Queue. Use its Stop button to cancel.");
+        setProgress(-1);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      renderStatus = await evalHost("pweGetRenderStatus()");
+    }
+    nativeRenderActive = false;
+    $("cancel").disabled = false;
+    if (cancelRequested) {
+      showPhase("Canceled; destination unchanged");
+      setProgress(0);
+      return;
+    }
+    if (!renderStatus.ok) {
+      throw new Error(renderStatus.message);
+    }
+    if (renderStatus.renderError) {
+      throw new Error(renderStatus.renderError);
+    }
+    if (renderStatus.renderCanceled || !renderStatus.renderDone) {
+      showPhase("Canceled; destination unchanged");
+      setProgress(0);
+      return;
+    }
+    const cleanup = await evalHost("pweFinishRender()");
+    renderPrepared = false;
+    if (!cleanup.ok) {
+      $("details").textContent = `Render cleanup warning: ${cleanup.message}`;
+    }
+    showPhase("Preparing export: starting WebM encoder...");
+    setProgress(65);
     args.splice(1, 0, "--frames", temp);
     const result = await runEncoder(args, showProgress);
     $("log").textContent = [...((result.log && result.log.lines) || []), result.stderr].join("\n").trim() || "No log output.";
@@ -610,27 +709,53 @@ async function exportWebm() {
       $("details").textContent = message;
     }
   } catch (error) {
-    showPhase("Export failed; destination unchanged", true);
-    $("details").textContent = error.message;
-    setProgress(0);
+    if (cancelRequested) {
+      showPhase("Canceled; destination unchanged");
+      setProgress(0);
+    } else {
+      showPhase("Export failed; destination unchanged", true);
+      $("details").textContent = error.message;
+      setProgress(0);
+    }
   } finally {
-    try {
-      removeTree(temp);
-    } catch (error) {
-      $("details").textContent += ` (Could not remove temporary frames in ${temp}.)`;
+    nativeRenderActive = false;
+    if (renderPrepared) {
+      await evalHost("pweFinishRender()");
+    }
+    if (temp) {
+      try {
+        removeTree(temp);
+      } catch (error) {
+        $("details").textContent += ` (Could not remove temporary frames in ${temp}.)`;
+      }
     }
     setBusy(false);
   }
 }
 
 function cancelExport() {
+  if (nativeRenderActive) {
+    showPhase("Use Stop in the After Effects Render Queue to cancel this render.");
+    return;
+  }
   cancelRequested = true;
   $("cancel").disabled = true;
   if (encoder) {
     showPhase("Canceling...");
     encoder.stdin.write("cancel\n");
   } else {
-    showPhase("Canceling after the After Effects render (press Stop in the Render Queue to stop it now)...");
+    showPhase("Canceling preparation...");
+    window.__adobe_cep__.evalScript("pweStopRender()", (raw) => {
+      try {
+        const result = JSON.parse(raw);
+        if (!result.ok) {
+          $("details").textContent = result.message;
+        }
+      } catch (error) { }
+    });
+    if (finishActiveAsk) {
+      finishActiveAsk(null);
+    }
   }
 }
 
@@ -653,8 +778,14 @@ function browse() {
 }
 
 async function start() {
+  $("export").disabled = true;
   $("refresh").onclick = refreshComp;
-  $("export").onclick = exportWebm;
+  $("export").onclick = () => {
+    exportWebm().catch((error) => {
+      showPhase(error.message || String(error), true);
+      $("details").textContent = error.stack || error.message || String(error);
+    });
+  };
   $("cancel").onclick = cancelExport;
   $("reveal").onclick = reveal;
   $("browse").onclick = browse;
@@ -680,6 +811,9 @@ async function start() {
     }
   });
   window.addEventListener("beforeunload", () => {
+    if (nativeRenderActive || (busy && !encoder)) {
+      window.__adobe_cep__.evalScript("pweStopRender()", () => { });
+    }
     if (encoder) {
       encoder.stdin.end();
     }
@@ -701,6 +835,7 @@ async function start() {
   };
   refreshPresetList();
   renderFields();
+  $("export").disabled = false;
   await refreshComp();
 }
 

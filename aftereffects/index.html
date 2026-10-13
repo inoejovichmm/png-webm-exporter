@@ -26,12 +26,15 @@
                 <button id="preset-rename" title="Rename the selected preset">Rename</button>
                 <button id="preset-delete" title="Delete the selected preset">Delete</button>
             </div>
-            <div id="ask" class="ask" hidden>
-                <div id="ask-message"></div>
-                <div class="row">
-                    <input id="ask-input" class="grow" type="text">
-                    <button id="ask-ok">OK</button>
-                    <button id="ask-cancel">Cancel</button>
+            <div id="ask" class="ask-backdrop" hidden>
+                <div id="ask-dialog" class="ask-dialog" role="dialog" aria-modal="true" aria-labelledby="ask-message"
+                    tabindex="-1">
+                    <div id="ask-message" class="ask-message"></div>
+                    <div class="row">
+                        <input id="ask-input" class="grow" type="text">
+                        <button id="ask-ok">OK</button>
+                        <button id="ask-cancel">Cancel</button>
+                    </div>
                 </div>
             </div>
             <div class="row codecs" role="radiogroup" aria-label="Encoder">

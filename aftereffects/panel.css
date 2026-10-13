@@ -101,11 +101,28 @@ button.primary {
     color: #ff7a6b;
 }
 
-.ask {
-    margin: 6px 0;
-    padding: 6px;
+.ask-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.72);
+}
+
+.ask-dialog {
+    width: 100%;
+    max-width: 340px;
+    padding: 14px;
     border: 1px solid #4a4a4a;
     background: #2b2b2b;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+
+.ask-message {
+    margin-bottom: 12px;
 }
 
 .phase {
