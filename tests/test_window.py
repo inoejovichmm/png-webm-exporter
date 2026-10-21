@@ -217,6 +217,50 @@ def test_input_path_label_updates(window, tmp_path):
     assert window.input_path.text() == str(source_dir)
 
 
+def test_input_folder_picker_remembers_selection(window, qtbot, tmp_path, monkeypatch):
+    source_dir = tmp_path / "sequence"
+    source_dir.mkdir()
+    Image.new("RGB", (32, 32)).save(source_dir / "frame_0001.png")
+    starting_directories = []
+
+    def select_folder(parent, title, directory):
+        starting_directories.append(directory)
+        return str(source_dir)
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", select_folder)
+    window.choose_folder()
+    window.choose_folder()
+    assert starting_directories == ["", str(source_dir)]
+    window.preferences.sync()
+    window.close()
+
+    preferences = QSettings(window.preferences.fileName(), QSettings.Format.IniFormat)
+    reopened = ExportWindow(preferences)
+    qtbot.addWidget(reopened)
+
+    def cancel_folder(parent, title, directory):
+        starting_directories.append(directory)
+        return ""
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", cancel_folder)
+    reopened.choose_folder()
+    assert starting_directories[-1] == str(source_dir)
+    assert preferences.value("input_directory") == str(source_dir)
+
+
+def test_input_folder_picker_ignores_missing_directory(window, tmp_path, monkeypatch):
+    window.preferences.setValue("input_directory", str(tmp_path / "missing"))
+    starting_directories = []
+
+    def cancel_folder(parent, title, directory):
+        starting_directories.append(directory)
+        return ""
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", cancel_folder)
+    window.choose_folder()
+    assert starting_directories == [""]
+
+
 def test_compact_layout(window, qtbot):
     qtbot.wait(20)
     assert window.size().width() >= window.minimumSize().width()

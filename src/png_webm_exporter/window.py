@@ -650,9 +650,14 @@ class ExportWindow(QMainWindow):
         self.readme_dialog.activateWindow()
 
     def choose_folder(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select a folder of PNG frames")
+        last_directory = self.preferences.value("input_directory", "")
+        if last_directory and not Path(last_directory).is_dir():
+            last_directory = ""
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select a folder of PNG frames", last_directory)
         if not directory:
             return
+        self.preferences.setValue("input_directory", directory)
         pngs = sorted(path for path in Path(directory).iterdir()
                       if path.is_file() and path.suffix.lower() == ".png")
         if not pngs:
